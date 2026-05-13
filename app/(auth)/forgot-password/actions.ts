@@ -33,7 +33,7 @@ export async function requestPasswordReset(formData: FormData) {
   const parsed = ForgotSchema.safeParse({
     email: formData.get("email"),
   });
-  if (!parsed.success) okRedirect();
+  if (!parsed.success) { okRedirect(); return; }
 
   const user = await prisma.user.findUnique({
     where: { email: parsed.data.email },

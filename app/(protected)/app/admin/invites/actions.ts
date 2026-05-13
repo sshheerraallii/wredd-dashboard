@@ -115,3 +115,66 @@ export async function createInvite(formData: FormData) {
   revalidatePath("/app/admin/invites");
   backOk("Invite sent.");
 }
+
+export async function resendInvite(formData: FormData) {
+  await requireAdmin();
+
+  const session = await readSession();
+  if (!session?.user?.id) backWithError("No session.");
+
+  const id = String(formData.get("id") ?? "").trim();
+  if (!id) backWithError("Missing invite ID.");
+
+  const invite = await prisma.userInvite.findUnique({
+    where: { id },
+    select: { id: true, email: true, role: true, status: true },
+  });
+
+  if (!invite) backWithError("Invite not found.");
+  if (invite.status !== "PENDING") backWithError("Only pending invites can be resent.");
+
+  // Rotate token and extend expiry
+  const rawToken = makeToken();
+  const tokenHash = hashToken(rawToken);
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+  await prisma.userInvite.update({
+    where: { id },
+    data: { tokenHash, expiresAt },
+  });
+
+  const appUrl = process.env.APP_URL || "http://localhost:3000";
+  const inviteLink = `${appUrl}/register?token=${rawToken}`;
+
+  await sendEmail({
+    to: invite.email,
+    subject: "Welcome to WREDD — complete your registration",
+    html: inviteEmailTemplate({ appUrl, inviteLink, role: invite.role }),
+  });
+
+  revalidatePath("/app/admin/invites");
+  backOk("Invite resent.");
+}
+
+export async function revokeInvite(formData: FormData) {
+  await requireAdmin();
+
+  const id = String(formData.get("id") ?? "").trim();
+  if (!id) backWithError("Missing invite ID.");
+
+  const invite = await prisma.userInvite.findUnique({
+    where: { id },
+    select: { id: true, status: true },
+  });
+
+  if (!invite) backWithError("Invite not found.");
+  if (invite.status !== "PENDING") backWithError("Only pending invites can be revoked.");
+
+  await prisma.userInvite.update({
+    where: { id },
+    data: { status: "REVOKED" },
+  });
+
+  revalidatePath("/app/admin/invites");
+  backOk("Invite revoked.");
+}
