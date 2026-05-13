@@ -1,26 +1,107 @@
-@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
+/* Tailwind v3 + shadcn token variables (HSL triplets) */
+@layer base {
+  /* ===============================
+     DARK-FIRST THEME (DEFAULT)
+     =============================== */
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+    --radius: 12px;
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+    /* Background / text */
+    --background: 0 0% 0%;              /* #000000 */
+    --foreground: 0 0% 96%;             /* #F5F5F5 */
+
+    /* Cards / popovers */
+    --card: 0 0% 11%;                   /* #1B1B1B */
+    --card-foreground: 0 0% 96%;
+
+    --popover: 0 0% 11%;
+    --popover-foreground: 0 0% 96%;
+
+    /* Primary (Blood Red – CTAs only) */
+    --primary: 357 38% 41%;              /* #8F4043 */
+    --primary-foreground: 0 0% 96%;
+
+    /* Neutral UI layers */
+    --secondary: 0 0% 17%;               /* #2B2B2B */
+    --secondary-foreground: 0 0% 96%;
+
+    --muted: 0 0% 17%;
+    --muted-foreground: 0 0% 80%;        /* #CCCCCC */
+
+    --accent: 0 0% 17%;
+    --accent-foreground: 0 0% 96%;
+
+    /* Destructive (same blood rule) */
+    --destructive: 357 38% 41%;
+    --destructive-foreground: 0 0% 96%;
+
+    /* Inputs / borders */
+    --border: 0 0% 20%;
+    --input: 0 0% 20%;
+    --ring: 357 38% 41%;
+
+    /* Optional: charts */
+    --chart-1: 357 38% 41%;
+    --chart-2: 0 0% 80%;
+    --chart-3: 0 0% 60%;
+    --chart-4: 0 0% 40%;
+    --chart-5: 0 0% 25%;
+
+    /* Optional: sidebar */
+    --sidebar: 0 0% 11%;
+    --sidebar-foreground: 0 0% 96%;
+    --sidebar-primary: 357 38% 41%;
+    --sidebar-primary-foreground: 0 0% 96%;
+    --sidebar-accent: 0 0% 17%;
+    --sidebar-accent-foreground: 0 0% 96%;
+    --sidebar-border: 0 0% 20%;
+    --sidebar-ring: 357 38% 41%;
+  }
+
+  /* ===============================
+     OPTIONAL LIGHT MODE (FUTURE)
+     =============================== */
+  .light {
+    --background: 0 0% 96%;              /* #F5F5F5 */
+    --foreground: 0 0% 8%;               /* near charcoal */
+
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 8%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 8%;
+
+    --primary: 357 38% 41%;
+    --primary-foreground: 0 0% 96%;
+
+    --secondary: 0 0% 92%;
+    --secondary-foreground: 0 0% 8%;
+
+    --muted: 0 0% 92%;
+    --muted-foreground: 0 0% 35%;
+
+    --accent: 0 0% 92%;
+    --accent-foreground: 0 0% 8%;
+
+    --destructive: 357 38% 41%;
+    --destructive-foreground: 0 0% 96%;
+
+    --border: 0 0% 85%;
+    --input: 0 0% 85%;
+    --ring: 357 38% 41%;
+  }
+
+  /* Base element styling */
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-satoshi);
+  }
 }
