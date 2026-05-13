@@ -1306,7 +1306,8 @@ export default async function PerformancePage({
 
       for (const l of monthLines) {
         if (!l.project || !l.projectId) continue;
-        const k = monthKeyOf(new Date(l.payableOn));
+        if (!l.payableOn) continue;
+const k = monthKeyOf(new Date(l.payableOn));
         if (!remoteOverallPagedKeys.includes(k)) continue;
         if (!byMonth[k]) byMonth[k] = { rows: [], paid: 0, unpaid: 0 };
         const amt = Number((l as any).amount?.toString?.() ?? l.amount ?? 0);

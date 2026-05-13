@@ -69,7 +69,7 @@ if (!parsed.success) { backWithError(parsed.error.issues[0]?.message ?? "Invalid
 
   const passwordHash = await bcrypt.hash(parsed.data.password, 12);
 
-  await prisma.$transaction(async (tx) => {
+await prisma.$transaction(async (tx: any) => {
     const user = await tx.user.create({
       data: {
         email: invite.email,
