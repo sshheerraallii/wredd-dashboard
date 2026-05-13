@@ -6,7 +6,7 @@ import { getPrisma } from "@/lib/prisma";
 import { readSession } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { BdCommissionTab } from "@prisma/client";
-import { computeDueOnForMonthKey } from "@/lib/bd-commission/due";
+
 
 function requireManagerOrAdmin(role?: string) {
   if (role !== "SUPER_ADMIN" && role !== "MANAGER") redirect("/app?err=forbidden");
@@ -90,7 +90,12 @@ export async function createBdAdjustment(input: {
 
   const { bdUserId, monthKey, amountPkr, note, returnTo } = schema.parse(input);
 
-  const dueOn = computeDueOnForMonthKey(monthKey);
+// dueOn = 1st of next month (consistent with BdCommission rows)
+  // Resolver moves CLEARING → DUE when dueOn <= now
+  const [y, m] = monthKey.split("-").map(Number);
+  const nextMonth = m === 12 ? 1 : m + 1;
+  const nextYear = m === 12 ? y + 1 : y;
+  const dueOn = new Date(Date.UTC(nextYear, nextMonth - 1, 1, 0, 0, 0));
   const amountStr = amountPkr.toFixed(2);
 
   await prisma.bdCommissionAdjustment.create({
