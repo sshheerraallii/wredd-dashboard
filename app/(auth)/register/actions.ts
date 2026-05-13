@@ -35,7 +35,7 @@ export async function completeRegistration(formData: FormData) {
     password: formData.get("password"),
   });
 
-  if (!parsed.success) backWithError(parsed.error.issues[0]?.message ?? "Invalid input");
+if (!parsed.success) { backWithError(parsed.error.issues[0]?.message ?? "Invalid input"); return; }
 
   const tokenHash = hashToken(parsed.data.token);
   const username = normalizeUsername(parsed.data.username);
