@@ -7,6 +7,9 @@ const nextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
+  env: {
+    TZ: "Asia/Karachi",
+  },
 };
 
 export default nextConfig;
