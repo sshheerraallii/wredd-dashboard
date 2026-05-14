@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/notifications/send",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/notifications/cleanup",
+      "schedule": "0 2 * * *"
+    }
+  ]
+}
