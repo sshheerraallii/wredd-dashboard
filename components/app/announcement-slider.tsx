@@ -48,7 +48,9 @@ export function AnnouncementSlider({
   const prev = () => setIndex((i) => clampIndex(i - 1, len));
   const next = () => setIndex((i) => clampIndex(i + 1, len));
 
-  const activeSrc = `${basePath}/${safeSlides[index]}`;
+  const activeSrc = basePath
+  ? `${basePath}/${safeSlides[index]}`
+  : safeSlides[index];
 
   return (
     <div
