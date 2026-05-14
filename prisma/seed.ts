@@ -1,12 +1,11 @@
 // prisma/seed.ts
 import "dotenv/config";
-import { PrismaClient, ProjectClass, Role, WorkerType } from "@prisma/client";
+import { PrismaClient, ProjectClass, Role } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
 import { Pool } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 
-// Prisma v7 + prisma.config.ts: use an adapter (direct DB connection)
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
@@ -22,21 +21,8 @@ function slugify(name: string) {
     .replace(/[^a-z0-9-]/g, "");
 }
 
-type SeededLogin = {
-  role: Role;
-  workerType?: WorkerType | null;
-  fullName: string;
-  username: string;
-  email: string;
-  password: string;
-};
-
 async function main() {
-  // Shared password for ALL seeded users
-  const passwordPlain = "NewStrongPassword123!";
-  const passwordHash = await bcrypt.hash(passwordPlain, 12);
-
-  // 1) Departments
+  // ── 1) Departments ───────────────────────────────────────────────────────
   const departmentNames = ["Video Editing", "Animations", "Web Development", "Operations"];
 
   const departments = await Promise.all(
@@ -56,7 +42,6 @@ async function main() {
       deptSlugs.map((slug) => {
         const departmentId = deptIdBySlug.get(slug);
         if (!departmentId) return Promise.resolve();
-
         return prisma.userDepartment.upsert({
           where: { userId_departmentId: { userId, departmentId } },
           update: {},
@@ -66,7 +51,7 @@ async function main() {
     );
   }
 
-  // 2) Project class definitions (base points)
+  // ── 2) Project class definitions ─────────────────────────────────────────
   const classPoints: Record<ProjectClass, number> = {
     C: 5,
     C_PLUS: 7,
@@ -87,27 +72,24 @@ async function main() {
     )
   );
 
-  const logins: SeededLogin[] = [];
-
-  // 3) Super Admin (Sher Ali)
-  const superEmail = "sher@wredd.com";
-  const superUsername = "sher";
-  const superName = "Sher Ali";
+  // ── 3) Super Admin ────────────────────────────────────────────────────────
+  const passwordPlain = "NewStrongPassword123!";
+  const passwordHash = await bcrypt.hash(passwordPlain, 12);
 
   const superAdmin = await prisma.user.upsert({
-    where: { email: superEmail },
+    where: { email: "sshheerraallii@gmail.com" },
     update: {
-      fullName: superName,
-      username: superUsername,
+      fullName: "Sher Ali",
+      username: "sher",
       role: Role.SUPER_ADMIN,
       passwordHash,
       archivedAt: null,
       workerType: null,
     },
     create: {
-      fullName: superName,
-      username: superUsername,
-      email: superEmail,
+      fullName: "Sher Ali",
+      username: "sher",
+      email: "sshheerraallii@gmail.com",
       role: Role.SUPER_ADMIN,
       passwordHash,
       workerType: null,
@@ -117,103 +99,14 @@ async function main() {
   // Give super admin access to all departments
   await assignDepartments(superAdmin.id, departments.map((d) => d.slug));
 
-  logins.push({
-    role: Role.SUPER_ADMIN,
-    workerType: null,
-    fullName: superName,
-    username: superUsername,
-    email: superEmail,
-    password: passwordPlain,
-  });
-
-  // 4) Users for each role
-  // Note: Choose defaults that make sense with your WorkerType enum
-  const usersToSeed: Array<{
-    role: Role;
-    fullName: string;
-    username: string;
-    email: string;
-    workerType?: WorkerType | null;
-    departmentSlugs: string[];
-  }> = [
-    {
-      role: Role.MANAGER,
-      fullName: "Wredd Manager",
-      username: "manager",
-      email: "manager@wredd.com",
-      workerType: WorkerType.OPERATIONS,
-      departmentSlugs: ["operations"],
-    },
-    {
-      role: Role.BUSINESS_DEVELOPER,
-      fullName: "Wredd BD",
-      username: "bd",
-      email: "bd@wredd.com",
-      workerType: WorkerType.OPERATIONS,
-      departmentSlugs: ["operations"],
-    },
-    {
-      role: Role.REMOTE_WORKER,
-      fullName: "Remote Video Editor",
-      username: "remote",
-      email: "remote@wredd.com",
-      workerType: WorkerType.REMOTE_VIDEO_EDITOR,
-      departmentSlugs: ["video-editing"],
-    },
-    {
-      role: Role.ONSITE_EMPLOYEE,
-      fullName: "Onsite Video Editor",
-      username: "onsite",
-      email: "onsite@wredd.com",
-      workerType: WorkerType.ONSITE_VIDEO_EDITOR,
-      departmentSlugs: ["video-editing"],
-    },
-  ];
-
-  for (const u of usersToSeed) {
-    const user = await prisma.user.upsert({
-      where: { email: u.email },
-      update: {
-        fullName: u.fullName,
-        username: u.username,
-        role: u.role,
-        workerType: u.workerType ?? null,
-        passwordHash,
-        archivedAt: null,
-      },
-      create: {
-        fullName: u.fullName,
-        username: u.username,
-        email: u.email,
-        role: u.role,
-        workerType: u.workerType ?? null,
-        passwordHash,
-      },
-    });
-
-    await assignDepartments(user.id, u.departmentSlugs);
-
-    logins.push({
-      role: u.role,
-      workerType: u.workerType ?? null,
-      fullName: u.fullName,
-      username: u.username,
-      email: u.email,
-      password: passwordPlain,
-    });
-  }
-
-  console.log("Seed complete.");
-  console.log("Login list (keep):");
-  console.table(
-    logins.map((x) => ({
-      role: x.role,
-      workerType: x.workerType ?? "",
-      email: x.email,
-      username: x.username,
-      password: x.password,
-    }))
-  );
+  console.log("✅ Seed complete.");
+  console.log("─────────────────────────────────────────");
+  console.log("Super Admin login:");
+  console.log("  Email   :", "sshheerraallii@gmail.com");
+  console.log("  Username:", "sher");
+  console.log("  Password:", passwordPlain);
+  console.log("─────────────────────────────────────────");
+  console.log("⚠️  Change your password after first login!");
 }
 
 main()
