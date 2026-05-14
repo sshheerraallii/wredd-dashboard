@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
 import Link from "next/link";
 import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -8,17 +8,16 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // NextAuth uses `callbackUrl`. Your older flow used `next`.
   const callbackUrl =
     searchParams.get("callbackUrl") ||
     searchParams.get("next") ||
     "/app";
 
-  const [identifier, setIdentifier] = useState(""); // email or username
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -39,7 +38,6 @@ export default function LoginPage() {
 
     setLoading(false);
 
-    // On failure, do NOT navigate (prevents 405)
     if (!res || res.error || res.ok === false) {
       setError("Invalid credentials");
       return;
@@ -90,17 +88,15 @@ export default function LoginPage() {
           </div>
 
           <Link href="/forgot-password" className="text-xs underline text-muted-foreground">
-  Forgot password?
-</Link>
-
-
+            Forgot password?
+          </Link>
 
           <Button className="w-full" type="submit" disabled={loading}>
             {loading ? "Signing in..." : "Continue"}
           </Button>
 
           <p className="text-xs text-muted-foreground">
-            After login you’ll be redirected to{" "}
+            After login you'll be redirected to{" "}
             <Link className="underline" href={callbackUrl}>
               {callbackUrl}
             </Link>
@@ -109,5 +105,17 @@ export default function LoginPage() {
         </form>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-sm text-muted-foreground">Loading...</div>
+      </div>
+    }>
+      <LoginForm />
+    </Suspense>
   );
 }
