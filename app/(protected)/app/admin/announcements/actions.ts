@@ -2,8 +2,16 @@
 
 import { redirect } from "next/navigation";
 import { readSession } from "@/lib/auth";
-import path from "path";
-import fs from "fs/promises";
+import { v2 as cloudinary } from "cloudinary";
+import { getPrisma } from "@/lib/prisma";
+
+const prisma = getPrisma();
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
 type Role =
   | "SUPER_ADMIN"
@@ -17,13 +25,34 @@ function requireManager(role: Role | undefined) {
   return role === "SUPER_ADMIN" || role === "MANAGER";
 }
 
-async function ensureDir(p: string) {
-  await fs.mkdir(p, { recursive: true });
-}
-
 async function fileToBuffer(file: File) {
   const ab = await file.arrayBuffer();
   return Buffer.from(ab);
+}
+
+async function uploadToCloudinary(
+  buffer: Buffer,
+  publicId: string
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    cloudinary.uploader
+      .upload_stream(
+        {
+          public_id: publicId,
+          overwrite: true,
+          resource_type: "image",
+          folder: "wredd/banners",
+          transformation: [
+            { quality: "auto", fetch_format: "auto" },
+          ],
+        },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result!.secure_url);
+        }
+      )
+      .end(buffer);
+  });
 }
 
 export async function uploadProjectBanners(formData: FormData) {
@@ -37,63 +66,96 @@ export async function uploadProjectBanners(formData: FormData) {
   const picked = files.filter((f) => f && typeof f !== "string" && f.size > 0);
 
   if (!picked.length)
-    redirect(
-      "/app/admin/announcements?err=" + encodeURIComponent("No files selected")
-    );
+    redirect("/app/admin/announcements?err=" + encodeURIComponent("No files selected"));
   if (picked.length > 4)
-    redirect(
-      "/app/admin/announcements?err=" + encodeURIComponent("Max 4 banners")
-    );
+    redirect("/app/admin/announcements?err=" + encodeURIComponent("Max 4 banners"));
 
-  const allowed = ["image/jpeg", "image/png"];
+  const allowed = ["image/jpeg", "image/png", "image/webp"];
   for (const f of picked) {
     if (!allowed.includes(f.type)) {
       redirect(
-        "/app/admin/announcements?err=" +
-          encodeURIComponent("Only JPG/PNG allowed")
+        "/app/admin/announcements?err=" + encodeURIComponent("Only JPG/PNG/WEBP allowed")
       );
     }
     if (f.size > 5_000_000) {
       redirect(
-        "/app/admin/announcements?err=" +
-          encodeURIComponent("Each file must be <= 5MB")
+        "/app/admin/announcements?err=" + encodeURIComponent("Each file must be <= 5MB")
       );
     }
   }
 
-  const absDir = path.join(process.cwd(), "public", "announcements", "projects");
-  await ensureDir(absDir);
+  try {
+    // Delete existing banner slots from Cloudinary
+    await Promise.allSettled([
+      cloudinary.uploader.destroy("wredd/banners/banner_01"),
+      cloudinary.uploader.destroy("wredd/banners/banner_02"),
+      cloudinary.uploader.destroy("wredd/banners/banner_03"),
+      cloudinary.uploader.destroy("wredd/banners/banner_04"),
+    ]);
 
-  // Clear existing images
-  const existing = await fs.readdir(absDir).catch(() => []);
-  await Promise.all(
-    existing
-      .filter((n) => /\.(jpg|jpeg|png)$/i.test(n))
-      .map((n) => fs.unlink(path.join(absDir, n)).catch(() => null))
-  );
+    // Upload new banners
+    const urls: string[] = [];
+    for (let i = 0; i < picked.length; i++) {
+      const buf = await fileToBuffer(picked[i]);
+      const publicId = `banner_0${i + 1}`;
+      const url = await uploadToCloudinary(buf, publicId);
+      urls.push(url);
+    }
 
-  const slides: string[] = [];
+    // Store the manifest (banner URLs) in DB as a single system setting
+    await prisma.systemSetting.upsert({
+      where: { key: "announcement_banners" },
+      update: { value: JSON.stringify(urls) },
+      create: { key: "announcement_banners", value: JSON.stringify(urls) },
+    });
 
-  // Write new ones as 01.jpg / 02.png ...
-  for (let i = 0; i < picked.length; i++) {
-    const f = picked[i];
-    const buf = await fileToBuffer(f);
-
-    const ext = f.type === "image/png" ? "png" : "jpg";
-    const name = String(i + 1).padStart(2, "0") + "." + ext;
-
-    await fs.writeFile(path.join(absDir, name), buf);
-    slides.push(name);
+    redirect("/app/admin/announcements?ok=" + encodeURIComponent("Banners uploaded"));
+  } catch (e: any) {
+    redirect(
+      "/app/admin/announcements?err=" +
+        encodeURIComponent(e?.message || "Upload failed")
+    );
   }
+}
 
-  // Write manifest (so UI can reliably know what to show)
-  await fs.writeFile(
-    path.join(absDir, "manifest.json"),
-    JSON.stringify({ slides }, null, 2),
-    "utf8"
-  );
+export async function getBannerUrls(): Promise<string[]> {
+  try {
+    const setting = await prisma.systemSetting.findUnique({
+      where: { key: "announcement_banners" },
+    });
+    if (!setting) return [];
+    return JSON.parse(setting.value) as string[];
+  } catch {
+    return [];
+  }
+}
 
-  redirect(
-    "/app/admin/announcements?ok=" + encodeURIComponent("Banners uploaded")
-  );
+export async function clearProjectBanners() {
+  const session = await readSession();
+  if (!session?.user) redirect("/login");
+
+  const role = session.user.role as Role | undefined;
+  if (!requireManager(role)) redirect("/app?err=forbidden");
+
+  try {
+    await Promise.allSettled([
+      cloudinary.uploader.destroy("wredd/banners/banner_01"),
+      cloudinary.uploader.destroy("wredd/banners/banner_02"),
+      cloudinary.uploader.destroy("wredd/banners/banner_03"),
+      cloudinary.uploader.destroy("wredd/banners/banner_04"),
+    ]);
+
+    await prisma.systemSetting.upsert({
+      where: { key: "announcement_banners" },
+      update: { value: JSON.stringify([]) },
+      create: { key: "announcement_banners", value: JSON.stringify([]) },
+    });
+
+    redirect("/app/admin/announcements?ok=" + encodeURIComponent("Banners cleared"));
+  } catch (e: any) {
+    redirect(
+      "/app/admin/announcements?err=" +
+        encodeURIComponent(e?.message || "Clear failed")
+    );
+  }
 }
