@@ -22,11 +22,15 @@ type Role =
 const PUBLIC_PREFIXES = [
   "/api/auth", // NextAuth endpoints
   "/login",
+  "/register",       // invite registration
+  "/forgot-password", // password reset
+  "/reset-password",  // password reset
   "/archived",
   "/_next",
   "/favicon.ico",
   "/public",
   "/announcements", // allow banner assets
+  "/api/cron",      // cron jobs
 ];
 
 // Where to send logged-in users when they hit forbidden routes.
