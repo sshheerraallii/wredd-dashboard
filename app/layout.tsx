@@ -1,6 +1,7 @@
 import "./globals.css";
 import { satoshi, cinzel } from "@/lib/fonts";
 import { ThemeProvider } from "@/components/theme-provider";
+import { Toaster } from "sonner";
 
 export const metadata = {
   title: "WREDD Dashboard",
@@ -15,7 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       className={`${satoshi.variable} ${cinzel.variable}`}
     >
       <body className="font-sans antialiased">
-        <ThemeProvider
+       <ThemeProvider
           attribute="class"
           defaultTheme="system"
           enableSystem
@@ -23,6 +24,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           value={{ light: "light", dark: "dark", system: "system" }}
         >
           {children}
+          <Toaster
+            position="top-right"
+            richColors
+            closeButton
+            duration={4000}
+          />
         </ThemeProvider>
       </body>
     </html>
