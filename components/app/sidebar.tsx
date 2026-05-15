@@ -35,44 +35,28 @@ function isManager(role?: Role) {
 function isBD(role?: Role) {
   return role === "BUSINESS_DEVELOPER" || role === "BD";
 }
-function isWorker(role?: Role) {
-  return role === "REMOTE_WORKER" || role === "ONSITE_EMPLOYEE";
-}
-function isRemoteWorker(workerType?: WorkerType) {
-  return workerType === "REMOTE_VIDEO_EDITOR" || workerType === "REMOTE_ANIMATOR";
-}
 
 function buildNavGroups(args: {
   role?: Role;
   userId: string;
   workerType?: WorkerType;
 }): NavGroup[] {
-  const { role, userId, workerType } = args;
+  const { role, userId } = args;
   const groups: NavGroup[] = [];
 
-  // ================= WORK =================
-  const work: NavItem[] = [];
-
-  if (isSuperAdmin(role)) {
-    work.push({ href: "/app/admin", label: "Dashboard" });
-    work.push({ href: "/app/projects", label: "Projects" });
-  } else if (isBD(role)) {
-    work.push({ href: "/app/bd", label: "Dashboard" });
-    work.push({ href: "/app/projects", label: "All Projects" });
-    work.push({ href: "/app/projects/new", label: "Create Project" });
-    work.push({ href: "/app/bd/commission", label: "My Commission" }); // ✅ Added
-  } else if (isWorker(role)) {
-    work.push({ href: "/app/worker", label: "Projects" });
-  } else {
-    work.push({ href: "/app", label: "Dashboard" });
-    work.push({ href: "/app/projects", label: "Projects" });
-  }
-
-  groups.push({ key: "work", title: "Work", items: work, defaultOpen: true });
-
-  // ================= SUPER ADMIN =================
+  // ── SUPER ADMIN ───────────────────────────────────────────────────────────
   if (isSuperAdmin(role)) {
     groups.push(
+      {
+        key: "work",
+        title: "Work",
+        defaultOpen: true,
+        items: [
+          { href: "/app/admin", label: "Dashboard" },
+          { href: "/app/projects", label: "Projects" },
+          { href: "/app/projects/new", label: "Create Project" },
+        ],
+      },
       {
         key: "team",
         title: "Team Management",
@@ -107,39 +91,112 @@ function buildNavGroups(args: {
     );
   }
 
-  // ================= MANAGER =================
+  // ── MANAGER ───────────────────────────────────────────────────────────────
   if (isManager(role)) {
-    groups.push({
-      key: "manager",
-      title: "Operations",
-      defaultOpen: true,
-      items: [
-        { href: "/app/projects", label: "Projects" },
-        { href: "/app/performance", label: "Performance" },
-        { href: "/app/admin/payments", label: "Payments Summary" },
-      ],
-    });
+    groups.push(
+      {
+        key: "work",
+        title: "Work",
+        defaultOpen: true,
+        items: [
+          { href: "/app/projects", label: "Projects" },
+          { href: "/app/projects/new", label: "Create Project" },
+        ],
+      },
+      {
+        key: "team",
+        title: "Team Management",
+        defaultOpen: true,
+        items: [
+          { href: "/app/admin/users", label: "Users" },
+          { href: "/app/admin/departments", label: "Departments" },
+          { href: "/app/admin/invites", label: "Invites" },
+          { href: "/app/admin/announcements", label: "Announcements" },
+        ],
+      },
+      {
+        key: "operations",
+        title: "Operations & Reports",
+        defaultOpen: true,
+        items: [
+          { href: "/app/admin/payments", label: "Payments Summary" },
+          { href: "/app/admin/payments/worker", label: "Worker Payments" },
+          { href: "/app/performance", label: "Performance" },
+        ],
+      }
+    );
   }
 
-  // ================= WORKER =================
-  if (isWorker(role)) {
-    const workerItems: NavItem[] = [
-      { href: "/app/worker/performance", label: "Performance" },
-    ];
-
-    if (isRemoteWorker(workerType)) {
-      workerItems.push({ href: "/app/worker/payments", label: "Payments" });
-    }
-
-    groups.push({
-      key: "worker",
-      title: "My Performance",
-      defaultOpen: true,
-      items: workerItems,
-    });
+  // ── BUSINESS DEVELOPER ────────────────────────────────────────────────────
+  if (isBD(role)) {
+    groups.push(
+      {
+        key: "work",
+        title: "Work",
+        defaultOpen: true,
+        items: [
+          { href: "/app/bd", label: "Dashboard" },
+          { href: "/app/projects", label: "All Projects" },
+          { href: "/app/projects/new", label: "Create Project" },
+        ],
+      },
+      {
+        key: "finance",
+        title: "My Finance",
+        defaultOpen: true,
+        items: [
+          { href: "/app/bd/commission", label: "My Commission" },
+        ],
+      }
+    );
   }
 
-  // ================= ACCOUNT =================
+  // ── REMOTE WORKER ─────────────────────────────────────────────────────────
+  if (role === "REMOTE_WORKER") {
+    groups.push(
+      {
+        key: "work",
+        title: "Work",
+        defaultOpen: true,
+        items: [
+          { href: "/app/worker", label: "Projects" },
+        ],
+      },
+      {
+        key: "worker",
+        title: "My Stats",
+        defaultOpen: true,
+        items: [
+          { href: "/app/worker/performance", label: "Performance" },
+          { href: "/app/worker/payments", label: "Payments" },
+        ],
+      }
+    );
+  }
+
+  // ── ONSITE EMPLOYEE ───────────────────────────────────────────────────────
+  if (role === "ONSITE_EMPLOYEE") {
+    groups.push(
+      {
+        key: "work",
+        title: "Work",
+        defaultOpen: true,
+        items: [
+          { href: "/app/worker", label: "Projects" },
+        ],
+      },
+      {
+        key: "worker",
+        title: "My Stats",
+        defaultOpen: true,
+        items: [
+          { href: "/app/worker/performance", label: "Performance" },
+        ],
+      }
+    );
+  }
+
+  // ── ACCOUNT (all roles) ───────────────────────────────────────────────────
   groups.push({
     key: "account",
     title: "Account",
