@@ -36,15 +36,16 @@ function LoginForm() {
       callbackUrl,
     });
 
-    setLoading(false);
+  setLoading(false);
 
     if (!res || res.error || res.ok === false) {
       setError("Invalid credentials");
       return;
     }
 
-    router.push(callbackUrl);
-    router.refresh();
+    // Use window.location for hard redirect — ensures session is fully
+    // picked up by middleware before the next page renders
+    window.location.href = callbackUrl;
   }
 
   return (
