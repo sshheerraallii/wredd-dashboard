@@ -66,6 +66,7 @@ function buildNavGroups(args: {
           { href: "/app/admin/departments", label: "Departments" },
           { href: "/app/admin/invites", label: "Invites" },
           { href: "/app/admin/announcements", label: "Announcements" },
+          { href: "/app/admin/workforce", label: "Workforce" },
         ],
       },
       {
@@ -112,6 +113,7 @@ function buildNavGroups(args: {
           { href: "/app/admin/departments", label: "Departments" },
           { href: "/app/admin/invites", label: "Invites" },
           { href: "/app/admin/announcements", label: "Announcements" },
+          { href: "/app/admin/workforce", label: "Workforce" },
         ],
       },
       {
