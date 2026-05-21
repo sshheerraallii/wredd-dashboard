@@ -23,7 +23,7 @@ const AssignSchema = z.object({
   projectId: z.string().min(1),
   userId: z.string().min(1),
   amount: z.string().optional(), // decimal string (REMOTE only) -> worker payout
-  allowedHours: z.coerce.number().int().min(1).max(100000).optional(), // ONSITE only
+  allocatedHours: z.coerce.number().int().min(1).max(100000).optional(), // ONSITE only — per worker
 });
 
 const UnassignSchema = z.object({
@@ -77,6 +77,10 @@ function payableOnFrom(firstCompletedAt: Date) {
 
 
 
+
+function payableOnPlaceholder() {
+  return new Date(0);
+}
 
 function parseMoney(input: string) {
   const s = input.trim();
@@ -188,10 +192,11 @@ async function ensureProjectFinance(tx: PrismaClient, projectId: string) {
  *
  * If switching to ONSITE, allowedHours must be provided or already exist.
  */
+
+
 async function syncFinanceWorkTypeFromAssignments(
   tx: PrismaClient,
-  projectId: string,
-  onsiteAllowedHours?: number
+  projectId: string
 ) {
   const proj = await tx.project.findUnique({
     where: { id: projectId },
@@ -206,7 +211,7 @@ async function syncFinanceWorkTypeFromAssignments(
 
   const active = await tx.projectAssignment.findMany({
     where: { projectId, unassignedAt: null },
-    select: { user: { select: { role: true } } },
+    select: { user: { select: { role: true } }, allocatedHours: true },
   });
 
   const hasOnsite = active.some((a) => a.user.role === "ONSITE_EMPLOYEE");
@@ -215,23 +220,16 @@ async function syncFinanceWorkTypeFromAssignments(
   if (!hasOnsite && !hasRemote) return;
 
   if (hasOnsite) {
-    const fin = await tx.projectFinance.findUnique({
-      where: { projectId },
-      select: { allowedHours: true, workType: true },
-    });
-
-    const existingHours = fin?.allowedHours ?? null;
-    const nextHours = onsiteAllowedHours ?? existingHours;
-
-    if (!nextHours || nextHours < 1) {
-      backWithError(projectId, "Onsite assignment requires allowed hours.");
-    }
+    // Sum allocatedHours across all active onsite assignments
+    const totalHours = active
+      .filter((a) => a.user.role === "ONSITE_EMPLOYEE")
+      .reduce((sum, a) => sum + (a.allocatedHours ?? 0), 0);
 
     await tx.projectFinance.update({
       where: { projectId },
       data: {
         workType: "ONSITE",
-        allowedHours: nextHours,
+        allowedHours: totalHours > 0 ? totalHours : null,
       } as any,
     });
   } else if (hasRemote) {
@@ -244,6 +242,7 @@ async function syncFinanceWorkTypeFromAssignments(
     });
   }
 }
+
 
 /**
  * Keep legacy Project.remotePrice synced from payment lines (worker payouts)
@@ -278,7 +277,7 @@ export async function assignWorkerToProject(input: z.infer<typeof AssignSchema>)
   const parsed = AssignSchema.safeParse(input);
   if (!parsed.success) redirect("/app/projects?err=invalid_input");
 
-  const { projectId, userId, amount, allowedHours } = parsed.data;
+ const { projectId, userId, amount, allocatedHours } = parsed.data;
 
   const project = await prisma.project.findUnique({
     where: { id: projectId },
@@ -308,9 +307,9 @@ export async function assignWorkerToProject(input: z.infer<typeof AssignSchema>)
     money = parseMoney(amount);
     if (!money) redirect(`/app/projects/${projectId}?err=invalid_payment_amount`);
   } else {
-    // onsite: allowedHours required (to compute onsite overhead later)
-    if (!allowedHours || allowedHours < 1) {
-      redirect(`/app/projects/${projectId}?err=allowed_hours_required_for_onsite`);
+    // onsite: allocatedHours required per worker (used in BD commission overhead)
+    if (!allocatedHours || allocatedHours < 1) {
+      redirect(`/app/projects/${projectId}?err=allocated_hours_required_for_onsite`);
     }
   }
 
@@ -318,7 +317,7 @@ export async function assignWorkerToProject(input: z.infer<typeof AssignSchema>)
     // assignment upsert
     await tx.projectAssignment.upsert({
       where: { projectId_userId: { projectId, userId } },
-      create: {
+     create: {
         projectId,
         userId,
         assignedById: actorId ?? null,
@@ -329,6 +328,9 @@ export async function assignWorkerToProject(input: z.infer<typeof AssignSchema>)
         outcome: "ACTIVE" as any,
         cancelledForWorkerAt: null,
         completedAt: null,
+
+        // ✅ per-worker hours (onsite only)
+        allocatedHours: isRemote ? null : (allocatedHours ?? null),
       },
       update: {
         assignedById: actorId ?? null,
@@ -337,6 +339,9 @@ export async function assignWorkerToProject(input: z.infer<typeof AssignSchema>)
         // ✅ if previously cancelled, re-activating clears it
         outcome: "ACTIVE" as any,
         cancelledForWorkerAt: null,
+
+        // ✅ update hours in case admin is re-assigning with a different value
+        allocatedHours: isRemote ? null : (allocatedHours ?? null),
       },
     });
 
@@ -364,7 +369,7 @@ export async function assignWorkerToProject(input: z.infer<typeof AssignSchema>)
     if (isRemote && money) {
       const payableOn = project.firstCompletedAt
         ? payableOnFrom(project.firstCompletedAt)
-        : null;
+        : payableOnPlaceholder();
 
       const existing = await tx.projectPaymentLine.findFirst({
         where: { projectId, userId },
@@ -399,15 +404,15 @@ export async function assignWorkerToProject(input: z.infer<typeof AssignSchema>)
       await syncLegacyRemotePriceFromLines(tx, projectId);
     }
 
-    // ✅ Auto workType from assignments (before firstCompletedAt)
-    await syncFinanceWorkTypeFromAssignments(tx, projectId, isRemote ? undefined : allowedHours);
+   // ✅ Auto workType from assignments (before firstCompletedAt)
+    await syncFinanceWorkTypeFromAssignments(tx, projectId);
 
     await writeSystemMessage(
       tx,
       projectId,
       isRemote
         ? `Assigned: ${userRec.fullName} (REMOTE) • Payment: ${money?.toString()}`
-        : `Assigned: ${userRec.fullName} (ONSITE) • Allowed hours: ${allowedHours}`,
+        : `Assigned: ${userRec.fullName} (ONSITE) • Allocated hours: ${allocatedHours}`,
       actorId
     );
   });
@@ -458,13 +463,7 @@ export async function unassignWorkerFromProject(input: z.infer<typeof UnassignSc
           outcome: "REMOVED" as any, // manager removed, not a worker cancellation
         },
       });
-    } else {
-      // already unassigned — still ensure outcome is correctly marked REMOVED
-      await tx.projectAssignment.update({
-        where: { projectId_userId: { projectId, userId } },
-        data: { outcome: "REMOVED" as any },
-      });
-    }
+    } 
 
     // Payment disappearance rule (remote only, unpaid only)
     if (userRec.archivedAt == null && userRec.role === "REMOTE_WORKER") {
@@ -659,9 +658,9 @@ export async function updateAssignmentPaymentAmount(input: z.infer<typeof Update
     });
     if (!project) backWithError(projectId, "project_not_found");
 
-    const payableOn = project.firstCompletedAt
+   const payableOn = project.firstCompletedAt
       ? payableOnFrom(project.firstCompletedAt)
-      : null;
+      : payableOnPlaceholder();
 
     const line = await tx.projectPaymentLine.findFirst({
       where: { projectId, userId },

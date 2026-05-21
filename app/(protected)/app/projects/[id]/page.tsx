@@ -366,6 +366,7 @@ export default async function ProjectPage({ params }: { params: { id: string } }
     where: { projectId: project.id, unassignedAt: null },
     select: {
       userId: true,
+      allocatedHours: true,
       user: { select: { fullName: true } },
     },
     orderBy: { assignedAt: "asc" },
@@ -374,18 +375,22 @@ export default async function ProjectPage({ params }: { params: { id: string } }
   const assigned = assignedRows.map((a) => ({
     userId: a.userId,
     fullName: a.user.fullName,
+    allocatedHours: a.allocatedHours ?? null,
   }));
 
   // Only load assignable workers if manager/admin
   const workers = canManage
-    ? await prisma.user.findMany({
+    ? (await prisma.user.findMany({
         where: {
           archivedAt: null,
           role: { in: ["REMOTE_WORKER", "ONSITE_EMPLOYEE"] },
         },
         select: { id: true, fullName: true, role: true, workerType: true },
         orderBy: { fullName: "asc" },
-      })
+      })).map((w) => ({
+        ...w,
+        role: w.role as "REMOTE_WORKER" | "ONSITE_EMPLOYEE",
+      }))
     : [];
 
   // Onsite rating avg
@@ -428,6 +433,15 @@ export default async function ProjectPage({ params }: { params: { id: string } }
         ? fmtPKR(totalRemote)
         : "—"
       : "—";
+
+  // Onsite worker's own allocated hours (visible to them on the project page)
+  const myAllocatedHours =
+    role === "ONSITE_EMPLOYEE" && isAssigned
+      ? (assignedRows.find((a) => a.userId === userId)?.allocatedHours ?? null)
+      : null;
+
+
+
 
   return (
     <div className="p-6 space-y-4">
@@ -480,6 +494,14 @@ export default async function ProjectPage({ params }: { params: { id: string } }
             </div>
             <DeliverDialog projectId={project.id} />
           </div>
+        </div>
+      ) : null}
+
+    {myAllocatedHours != null ? (
+        <div className="rounded-xl border bg-card p-4">
+          <div className="text-sm font-medium">Your allocated hours</div>
+          <div className="mt-1 text-2xl font-semibold">{myAllocatedHours} hrs</div>
+          <div className="text-xs text-muted-foreground mt-1">Hours budgeted for you on this project</div>
         </div>
       ) : null}
 
@@ -538,7 +560,7 @@ export default async function ProjectPage({ params }: { params: { id: string } }
 
             {(project as any).finance?.workType === "ONSITE" ? (
               <div className="flex justify-between gap-4">
-                <span className="text-muted-foreground">Allowed hours</span>
+               <span className="text-muted-foreground">Total allocated hours</span>
                 <span className="font-medium">{(project as any).finance.allowedHours ?? "—"}</span>
               </div>
             ) : null}

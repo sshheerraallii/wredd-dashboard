@@ -24,7 +24,7 @@ type Worker = {
   workerType?: string | null;
 };
 
-type Assigned = { userId: string; fullName: string };
+type Assigned = { userId: string; fullName: string; allocatedHours?: number | null };
 
 function isRemote(w?: Worker | null) {
   return w?.role === "REMOTE_WORKER";
@@ -51,7 +51,7 @@ export function AssignmentsCard({
   const [query, setQuery] = React.useState("");
   const [selectedId, setSelectedId] = React.useState<string>("");
   const [amount, setAmount] = React.useState<string>(""); // remote payout
-  const [allowedHours, setAllowedHours] = React.useState<string>(""); // onsite allowed hours
+const [allocatedHours, setAllocatedHours] = React.useState<string>(""); // onsite allocated hours (per worker)
   const [busy, setBusy] = React.useState(false);
 
   if (!canManage) return null;
@@ -67,11 +67,11 @@ export function AssignmentsCard({
     return workers.filter((w) => w.fullName.toLowerCase().includes(q));
   }, [workers, query]);
 
-  function resetModal() {
+ function resetModal() {
     setQuery("");
     setSelectedId("");
     setAmount("");
-    setAllowedHours("");
+    setAllocatedHours("");
   }
 
   async function handleAssign() {
@@ -83,7 +83,7 @@ export function AssignmentsCard({
         projectId,
         userId: selectedId,
         amount: amount.trim() ? amount.trim() : undefined,
-        allowedHours: allowedHours.trim() ? Number(allowedHours.trim()) : undefined,
+      allocatedHours: allocatedHours.trim() ? Number(allocatedHours.trim()) : undefined,
       });
 
       router.refresh();
@@ -122,7 +122,7 @@ export function AssignmentsCard({
     !!selectedId &&
     !busy &&
     (!isRemote(selected) || !!amount.trim()) &&
-    (!isOnsite(selected) || !!allowedHours.trim());
+   (!isOnsite(selected) || !!allocatedHours.trim());
 
   return (
     <div className="rounded-xl border border-white/10 bg-card p-4 space-y-4">
@@ -195,16 +195,16 @@ export function AssignmentsCard({
                 />
               </div>
 
-              {/* Onsite allowed hours */}
+             {/* Onsite allocated hours (per worker) */}
               <div className="rounded-lg border p-3 space-y-2">
-                <div className="text-sm font-medium">Allowed hours (onsite only)</div>
+                <div className="text-sm font-medium">Allocated hours (onsite only)</div>
                 <div className="text-xs text-muted-foreground">
-                  Required for onsite projects (used for costing + commission overhead).
+                  Hours allocated to this worker for this project (used for cost + commission).
                 </div>
 
                 <Input
-                  value={allowedHours}
-                  onChange={(e) => setAllowedHours(e.target.value)}
+                  value={allocatedHours}
+                  onChange={(e) => setAllocatedHours(e.target.value)}
                   placeholder={isOnsite(selected) ? "e.g., 12 (required for onsite)" : "—"}
                   inputMode="numeric"
                   disabled={busy || !isOnsite(selected)}
@@ -250,7 +250,12 @@ export function AssignmentsCard({
               key={a.userId}
               className="flex items-center justify-between rounded-lg border border-white/10 px-3 py-2"
             >
-              <div className="text-sm">{a.fullName}</div>
+              <div>
+                <div className="text-sm">{a.fullName}</div>
+                {a.allocatedHours != null ? (
+                  <div className="text-xs text-muted-foreground">{a.allocatedHours} hrs allocated</div>
+                ) : null}
+              </div>
 
               <div className="flex items-center gap-2">
                 <Button

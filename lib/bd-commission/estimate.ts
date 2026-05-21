@@ -1,17 +1,7 @@
 // lib/bd-commission/estimate.ts
-import type { Prisma } from "@prisma/client";
+import { getPrisma } from "@/lib/prisma";
 
-export type FinanceSnapshot = {
-  workType: "ONSITE" | "REMOTE" | string;
-  priceUsd: Prisma.Decimal | number | string | null;
-platformFeePercent: Prisma.Decimal | number | string | null;  allowedHours: number | null;
-};
-
-export type MonthConfig = {
-  fxRate: Prisma.Decimal | number | string; // ✅ comes from MonthlyFinanceConfig
-  avgOnsiteHourCostPkr: Prisma.Decimal | number | string;
-  remoteOverheadFixedPkr: Prisma.Decimal | number | string;
-};
+const prisma = getPrisma();
 
 function toNum(v: any) {
   const n = typeof v === "string" ? Number(v) : Number(v?.toString?.() ?? v);
@@ -19,21 +9,29 @@ function toNum(v: any) {
 }
 
 export async function estimateRemoteWorkerPayoutPkr(_projectId: string) {
-  // Wire later to your remote payment expected payouts if you want.
   return 0;
 }
 
 export async function estimateActiveProfitPkr(args: {
   projectId: string;
-  finance: FinanceSnapshot | null;
-  config: MonthConfig | null;
+  finance: {
+    workType: string;
+    priceUsd: any;
+    platformFeePercent: any;
+  } | null;
+  config: {
+    fxRate: any;
+    avgOnsiteHourCostPkr: any;
+    remoteOverheadFixedPkr: any;
+  } | null;
 }) {
   const { projectId, finance, config } = args;
   if (!finance || !config) return null;
 
   const priceUsd = toNum(finance.priceUsd);
-const feePct = toNum(finance.platformFeePercent);
-const feeUsd = Math.max(0, priceUsd * (feePct / 100));  const fxRate = toNum(config.fxRate);
+  const feePct = toNum(finance.platformFeePercent);
+  const feeUsd = Math.max(0, priceUsd * (feePct / 100));
+  const fxRate = toNum(config.fxRate);
 
   if (!fxRate || fxRate <= 0) return null;
 
@@ -41,9 +39,31 @@ const feeUsd = Math.max(0, priceUsd * (feePct / 100));  const fxRate = toNum(con
   const netPkr = netUsd * fxRate;
 
   if (finance.workType === "ONSITE") {
-    const allowedHours = finance.allowedHours ?? 0;
+    // Per-worker cost: SUM(allocatedHours × worker.onsiteHourRatePkr ?? avgOnsiteHourCostPkr)
     const avgHourCost = toNum(config.avgOnsiteHourCostPkr);
-    const overhead = allowedHours * avgHourCost;
+
+    const assignments = await prisma.projectAssignment.findMany({
+      where: {
+        projectId,
+        unassignedAt: null,
+        outcome: { not: "CANCELLED" as any },
+        user: { role: "ONSITE_EMPLOYEE" as any },
+      },
+      select: {
+        allocatedHours: true,
+        user: { select: { onsiteHourRatePkr: true } },
+      },
+    });
+
+    let overhead = 0;
+    for (const a of assignments) {
+      const hours = a.allocatedHours ?? 0;
+      const rate = a.user.onsiteHourRatePkr != null
+        ? Number(a.user.onsiteHourRatePkr)
+        : avgHourCost;
+      overhead += hours * rate;
+    }
+
     return netPkr - overhead;
   }
 

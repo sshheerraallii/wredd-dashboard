@@ -28,8 +28,9 @@ export default async function UserEditPage({
       workerType: true,
       archivedAt: true,
 
-      // performance fields
+     // performance fields
       targetMonthlyPoints: true,
+      onsiteHourRatePkr: true,
       joinedAt: true,
       createdAt: true,
     },
@@ -172,6 +173,23 @@ export default async function UserEditPage({
               </div>
             </div>
           </div>
+
+       {user.role === "ONSITE_EMPLOYEE" ? (
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Onsite hour rate (PKR)</label>
+              <input
+                name="onsiteHourRatePkr"
+                type="number"
+                min={0}
+                defaultValue={user.onsiteHourRatePkr ?? ""}
+                placeholder="Leave blank to use global avg rate"
+                className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+              />
+              <div className="text-xs text-muted-foreground">
+                Per-hour cost used in BD commission overhead. Falls back to monthly avg if blank.
+              </div>
+            </div>
+          ) : null}
 
           <div className="text-xs text-muted-foreground">
             Created: {new Date(user.createdAt).toLocaleString()}

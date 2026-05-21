@@ -148,7 +148,7 @@ export async function upsertBdCommissionForProject(projectId: string) {
     const fxRate = toDec(config.fxRate, "0");
     const netPkr = netUsd.mul(fxRate);
 
-    // 5) COSTS / OVERHEAD
+   // 5) COSTS / OVERHEAD
     let overheadPkr = new Prisma.Decimal(0);
     let workerPayoutPkr = new Prisma.Decimal(0);
 
@@ -156,9 +156,31 @@ export async function upsertBdCommissionForProject(projectId: string) {
       overheadPkr = toDec(config.remoteOverheadFixedPkr, "0");
       workerPayoutPkr = await getRemoteWorkerPayoutTotalPkr(tx, projectId);
     } else {
-      const hours = Number(project.finance.allowedHours ?? 0);
+      // Per-worker cost: SUM(allocatedHours × worker.onsiteHourRatePkr)
+      // Falls back to config.avgOnsiteHourCostPkr if worker has no rate set
+      const onsiteAssignments = await tx.projectAssignment.findMany({
+        where: {
+          projectId,
+          unassignedAt: null,
+          outcome: { not: "CANCELLED" as any },
+          user: { role: Role.ONSITE_EMPLOYEE },
+        },
+        select: {
+          allocatedHours: true,
+          user: { select: { onsiteHourRatePkr: true } },
+        },
+      });
+
       const avgHourCost = toDec(config.avgOnsiteHourCostPkr, "0");
-      overheadPkr = new Prisma.Decimal(hours).mul(avgHourCost);
+
+      for (const a of onsiteAssignments) {
+        const hours = new Prisma.Decimal(a.allocatedHours ?? 0);
+        const rate = a.user.onsiteHourRatePkr != null
+          ? new Prisma.Decimal(a.user.onsiteHourRatePkr)
+          : avgHourCost;
+        overheadPkr = overheadPkr.add(hours.mul(rate));
+      }
+
       workerPayoutPkr = new Prisma.Decimal(0);
     }
 
@@ -224,7 +246,7 @@ export async function upsertBdCommissionForProject(projectId: string) {
         avgOnsiteHourCostPkr: config.avgOnsiteHourCostPkr,
         remoteOverheadFixedPkr: config.remoteOverheadFixedPkr,
 
-        allowedHours: project.finance.allowedHours,
+        allowedHours: project.finance.allowedHours, // sum of per-worker allocatedHours, kept for display
 
         bdRate,
 
@@ -255,7 +277,7 @@ export async function upsertBdCommissionForProject(projectId: string) {
         avgOnsiteHourCostPkr: config.avgOnsiteHourCostPkr,
         remoteOverheadFixedPkr: config.remoteOverheadFixedPkr,
 
-        allowedHours: project.finance.allowedHours,
+     allowedHours: project.finance.allowedHours, // sum of per-worker allocatedHours, kept for display
 
         bdRate,
 

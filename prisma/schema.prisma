@@ -137,9 +137,13 @@ model User {
   role         Role
   workerType   WorkerType?
 
-  // BD commission (Super Admin controlled)
+ // BD commission (Super Admin controlled)
   // Stored as decimal fraction: 0.35 = 35%
   bdCommissionRate Decimal? @db.Decimal(5, 4)
+
+  // Onsite cost rate (PKR per hour) — used in BD commission overhead calc
+  // Nullable: falls back to MonthlyFinanceConfig.avgOnsiteHourCostPkr
+  onsiteHourRatePkr Int?
 
   // onsite performance (targets)
   targetMonthlyPoints Int @default(0)
@@ -538,10 +542,14 @@ model ProjectAssignment {
   assignedAt   DateTime  @default(now())
   unassignedAt DateTime?
 
-  // ✅ Standalone worker-level outcome (does NOT affect Project.status)
+// ✅ Standalone worker-level outcome (does NOT affect Project.status)
   outcome              AssignmentOutcome @default(ACTIVE)
   cancelledForWorkerAt DateTime?
   completedAt          DateTime?
+
+  // Hours allocated to this worker for this project (onsite only)
+  // Nullable: only set for ONSITE_EMPLOYEE assignments
+  allocatedHours Int?
 
   project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user       User    @relation("AssignmentUser", fields: [userId], references: [id], onDelete: Cascade)

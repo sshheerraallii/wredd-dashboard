@@ -155,11 +155,10 @@ function feeUsdFrom(priceUsdRaw: any, feePercentRaw: any, feeUsdRaw: any) {
   return { price, pct, feeUsd };
 }
 
-function fmtOnsiteEffort(hoursRaw: any, rateRaw: any) {
+function fmtOnsiteEffort(hoursRaw: any) {
   const hours = Number(hoursRaw ?? 0);
-  const rate = new Prisma.Decimal(rateRaw ?? 0);
-  const total = new Prisma.Decimal(hours).mul(rate);
-  return `${hours} hrs × ${fmtMoneyPkr(Number(rate))} = ${fmtMoneyPkr(Number(total))}`;
+  if (!hours) return "—";
+  return `${hours} hrs total`;
 }
 
 // Server-action wrapper for <form action=...>
@@ -585,7 +584,7 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
             ) : tab === "ACTIVE" ? (
               rows.map((r: any) => {
                 const workType = r.finance?.workType;
-                const effort = workType === "ONSITE" ? `${r.finance?.allowedHours ?? 0} hrs` : "Remote overhead (fixed)";
+               const effort = workType === "ONSITE" ? `${r.finance?.allowedHours ?? 0} hrs total` : "Remote overhead (fixed)";
 
                 const { pct, feeUsd } = feeUsdFrom(
                   r.finance?.priceUsd,
@@ -641,7 +640,7 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
                   ? "-"
                   : r.workType === "REMOTE"
                     ? fmtMoneyPkr(Number(r.overheadPkr ?? 0))
-                    : fmtOnsiteEffort(r.allowedHours, r.avgOnsiteHourCostPkr);
+                    : fmtOnsiteEffort(r.allowedHours);
 
                 // prefer ledger snapshot fields, else fall back to project.finance if present
                 const priceUsdRaw = isAdj ? null : (r.priceUsd ?? r.project?.finance?.priceUsd);

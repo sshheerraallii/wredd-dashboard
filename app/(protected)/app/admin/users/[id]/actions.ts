@@ -35,11 +35,13 @@ export async function updateUserPerformance(userId: string, formData: FormData) 
   const Schema = z.object({
     targetMonthlyPoints: z.coerce.number().int().min(0).max(100000),
     joinedAt: z.string().min(10),
+    onsiteHourRatePkr: z.coerce.number().int().min(0).max(10000000).nullable().optional(),
   });
 
   const parsed = Schema.safeParse({
     targetMonthlyPoints: formData.get("targetMonthlyPoints"),
     joinedAt: formData.get("joinedAt"),
+    onsiteHourRatePkr: formData.get("onsiteHourRatePkr") || null,
   });
 
   if (!parsed.success) backWithError(userId, parsed.error.issues[0]?.message ?? "Invalid input");
@@ -47,11 +49,12 @@ export async function updateUserPerformance(userId: string, formData: FormData) 
   const joinedAt = new Date(parsed.data.joinedAt + "T00:00:00.000Z");
   if (Number.isNaN(joinedAt.getTime())) backWithError(userId, "Invalid joinedAt");
 
-  await prisma.user.update({
+ await prisma.user.update({
     where: { id: userId },
     data: {
       targetMonthlyPoints: parsed.data.targetMonthlyPoints,
       joinedAt,
+      onsiteHourRatePkr: parsed.data?.onsiteHourRatePkr ?? null,
     },
   });
 
