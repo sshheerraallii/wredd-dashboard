@@ -87,7 +87,8 @@ function buildNavGroups(args: {
           { href: "/app/admin/payments", label: "Payments Summary" },
           { href: "/app/admin/payments/worker", label: "Worker Payments" },
           { href: "/app/performance", label: "Performance" },
-          { href: "/app/admin/calculator", label: "Render Calculator" },
+          { href: "/app/admin/calculator", label: "Video Editing Render Calculator" },
+          { href: "/app/admin/animator-calculator", label: "Animations Calculator" }, 
         ],
       }
     );
@@ -125,7 +126,8 @@ function buildNavGroups(args: {
           { href: "/app/admin/payments", label: "Payments Summary" },
           { href: "/app/admin/payments/worker", label: "Worker Payments" },
           { href: "/app/performance", label: "Performance" },
-          { href: "/app/admin/calculator", label: "Render Calculator" },
+          { href: "/app/admin/calculator", label: "Video Editing Render Calculator" },
+          { href: "/app/admin/animator-calculator", label: "Animations Calculator" }, 
         ],
       }
     );
