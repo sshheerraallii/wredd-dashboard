@@ -87,6 +87,7 @@ function buildNavGroups(args: {
           { href: "/app/admin/payments", label: "Payments Summary" },
           { href: "/app/admin/payments/worker", label: "Worker Payments" },
           { href: "/app/performance", label: "Performance" },
+          { href: "/app/admin/calculator", label: "Render Calculator" },
         ],
       }
     );
@@ -124,6 +125,7 @@ function buildNavGroups(args: {
           { href: "/app/admin/payments", label: "Payments Summary" },
           { href: "/app/admin/payments/worker", label: "Worker Payments" },
           { href: "/app/performance", label: "Performance" },
+          { href: "/app/admin/calculator", label: "Render Calculator" },
         ],
       }
     );
