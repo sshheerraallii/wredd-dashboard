@@ -115,6 +115,17 @@ export async function middleware(req: NextRequest) {
     }
     return NextResponse.next();
   }
+// ── Ops Tasks (new) ──
+  if (pathname.startsWith("/app/ops-tasks")) {
+    if (
+      role !== "SUPER_ADMIN" &&
+      role !== "MANAGER" &&
+      role !== "BUSINESS_DEVELOPER"
+    ) {
+      return redirectTo(req, FORBIDDEN_FALLBACK);
+    }
+    return NextResponse.next();
+  }
 
   // Everything else: allow (other pages may do their own auth)
   return NextResponse.next();

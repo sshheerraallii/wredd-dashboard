@@ -113,6 +113,10 @@ enum NotificationType {
   PROJECT_COMPLETED
   PROJECT_CANCELLED
   PROJECT_RATED
+   // ── Ops Tasks ──
+  TASK_ASSIGNED
+  TASK_DUE_SOON
+  TASK_REOPENED
 }
 
 enum NotificationDeliveryStatus {
@@ -204,6 +208,13 @@ model User {
   notifications           Notification[]         @relation("NotificationRecipient")
   notificationDeliveries  NotificationDelivery[] @relation("NotificationDeliveryRecipient")
   notificationPreferences NotificationPreference?
+
+// Ops Tasks
+  opsTasksAssigned    OpsTask[]         @relation("OpsTaskAssignee")
+  opsTasksCreated     OpsTask[]         @relation("OpsTaskCreatedBy")
+  opsTaskInstances    OpsTaskInstance[] @relation("OpsTaskInstanceAssignee")
+  opsTasksReopened    OpsTaskInstance[] @relation("OpsTaskInstanceReopenedBy")
+  opsTasksExtended    OpsTaskInstance[] @relation("OpsTaskInstanceExtendedBy")
 
   @@index([role])
   @@index([workerType])
@@ -834,6 +845,9 @@ model NotificationPreference {
   emailProjectRatings    Boolean @default(true)
   emailAssignments       Boolean @default(true)
 
+emailTaskAssigned  Boolean @default(true)
+  emailTaskDueSoon   Boolean @default(true)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -884,4 +898,95 @@ model SystemSetting {
   value     String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+
+/**
+ * =========================
+ * OPS TASKS
+ * =========================
+ */
+
+enum OpsTaskType {
+  ONE_OFF
+  RECURRING
+}
+
+model OpsTask {
+  id          String     @id @default(cuid())
+  title       String
+  description String?
+  type        OpsTaskType
+
+  assigneeId  String
+  assignee    User   @relation("OpsTaskAssignee", fields: [assigneeId], references: [id], onDelete: Restrict)
+
+  createdById String
+  createdBy   User   @relation("OpsTaskCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  // Hours the assignee has to complete this task
+  timerHours  Int
+
+  // RECURRING only — which days to generate (0=Sun,1=Mon,...,6=Sat)
+  // Stored as array of ints. Empty = paused. All 7 = every day.
+  runOnDays   Int[]
+
+  // Soft-pause recurring without deleting
+  isActive    Boolean @default(true)
+
+  instances   OpsTaskInstance[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([assigneeId])
+  @@index([createdById])
+  @@index([type, isActive])
+}
+
+model OpsTaskInstance {
+  id     String  @id @default(cuid())
+  taskId String
+  task   OpsTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  // Denormalised at creation time so history is preserved if task changes
+  assigneeId  String
+  assignee    User   @relation("OpsTaskInstanceAssignee", fields: [assigneeId], references: [id], onDelete: Restrict)
+  title       String
+  timerHours  Int
+
+  // Deadline — set at creation, can be extended by super admin
+  dueAt         DateTime
+  originalDueAt DateTime  // never changes — used to compute lateness tier
+
+  // Admin deadline extension log
+  deadlineExtendedAt    DateTime?
+  deadlineExtendedById  String?
+  deadlineExtendedBy    User?     @relation("OpsTaskInstanceExtendedBy", fields: [deadlineExtendedById], references: [id], onDelete: SetNull)
+
+  // Completion
+  status         String    @default("PENDING") // "PENDING" | "COMPLETED"
+  completedAt    DateTime?
+  completionNote String?   // optional note by employee
+
+  // Points awarded on completion (null = not yet done)
+  // 10 = on time, 6 = late ≤2x, 3 = late >2x
+  points Int?
+
+  // Admin reopen log
+  reopenedAt   DateTime?
+  reopenedById String?
+  reopenedBy   User?     @relation("OpsTaskInstanceReopenedBy", fields: [reopenedById], references: [id], onDelete: SetNull)
+
+  // Notification guard — prevents duplicate due-soon alerts
+  dueSoonNotifiedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([assigneeId, status])
+  @@index([taskId])
+  @@index([dueAt])
+  @@index([status, dueAt])
+  @@index([assigneeId, createdAt])
 }

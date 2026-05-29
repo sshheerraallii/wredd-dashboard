@@ -16,8 +16,9 @@ type NotifyArgs = {
 
   recipients:
     | { kind: "PROJECT_ASSIGNEES_ACTIVE" }
-    | { kind: "PROJECT_AUDIENCE" } // ✅ assignees + watchers (in-app)
-    | { kind: "DEPARTMENT_USERS"; departmentId: string; workersOnly?: boolean };
+    | { kind: "PROJECT_AUDIENCE" } // assignees + watchers (in-app)
+    | { kind: "DEPARTMENT_USERS"; departmentId: string; workersOnly?: boolean }
+    | { kind: "SPECIFIC_USERS"; userIds: string[] }; // ops tasks + direct targeting
 };
 
 function uniq(ids: string[]) {
@@ -59,26 +60,42 @@ async function getDepartmentUserIds(departmentId: string, workersOnly?: boolean)
   return rows
     .filter((r) => !r.user.archivedAt)
     .filter((r) =>
-      workersOnly ? r.user.role === "REMOTE_WORKER" || r.user.role === "ONSITE_EMPLOYEE" : true
+      workersOnly
+        ? r.user.role === "REMOTE_WORKER" || r.user.role === "ONSITE_EMPLOYEE"
+        : true
     )
     .map((r) => r.userId);
 }
 
-function emailGateForType(type: NotificationType) {
-  // Email only for assigned-project events
-  // NOTE: PROJECT_CREATED_UNASSIGNED is in-app only
+/**
+ * Maps a notification type to the preference column that gates its email.
+ * Returns null = no email for this type (in-app only).
+ */
+function emailGateForType(type: NotificationType): string | null {
+  // In-app only
   if (type === "PROJECT_CREATED_UNASSIGNED") return null;
 
+  // Project events
   if (type === "PROJECT_MESSAGE") return "emailProjectMessages";
   if (type === "PROJECT_STATUS_CHANGED") return "emailProjectStatus";
-  if (type === "PROJECT_COMPLETED" || type === "PROJECT_CANCELLED") return "emailProjectCompletion";
+  if (type === "PROJECT_COMPLETED" || type === "PROJECT_CANCELLED")
+    return "emailProjectCompletion";
   if (type === "PROJECT_RATED") return "emailProjectRatings";
-  if (type === "ASSIGNMENT_ADDED" || type === "ASSIGNMENT_REMOVED") return "emailAssignments";
+  if (type === "ASSIGNMENT_ADDED" || type === "ASSIGNMENT_REMOVED")
+    return "emailAssignments";
+
+  // Ops task events
+  if (type === "TASK_ASSIGNED" || type === "TASK_REOPENED")
+    return "emailTaskAssigned";
+  if (type === "TASK_DUE_SOON") return "emailTaskDueSoon";
 
   return null;
 }
 
-async function getEmailEligibleRecipients(userIds: string[], type: NotificationType) {
+async function getEmailEligibleRecipients(
+  userIds: string[],
+  type: NotificationType
+) {
   const gate = emailGateForType(type);
   if (!gate) return [];
 
@@ -94,12 +111,14 @@ async function getEmailEligibleRecipients(userIds: string[], type: NotificationT
           emailProjectCompletion: true,
           emailProjectRatings: true,
           emailAssignments: true,
+          emailTaskAssigned: true,
+          emailTaskDueSoon: true,
         },
       },
     },
   });
 
-  // Default behavior: if preference row missing => treat as TRUE.
+  // Default: if preference row is missing, treat all flags as true
   return users.filter((u) => {
     const pref = u.notificationPreferences;
     if (!pref) return true;
@@ -107,15 +126,23 @@ async function getEmailEligibleRecipients(userIds: string[], type: NotificationT
   });
 }
 
-function buildEmailHtml(args: { title: string; body?: string | null; href?: string | null }) {
-  const safeBody = args.body ? args.body.replace(/</g, "&lt;").replace(/>/g, "&gt;") : "";
-  const appUrl = (process.env.APP_URL || "").replace(/\/$/, ""); // strip trailing slash
+function buildEmailHtml(args: {
+  title: string;
+  body?: string | null;
+  href?: string | null;
+}) {
+  const safeBody = args.body
+    ? args.body.replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    : "";
+  const appUrl = (process.env.APP_URL || "").replace(/\/$/, "");
   const fullHref = args.href
     ? args.href.startsWith("/")
       ? `${appUrl}${args.href}`
       : args.href
     : null;
-  const link = fullHref ? `<p><a href="${fullHref}">Open in WREDD</a></p>` : "";
+  const link = fullHref
+    ? `<p><a href="${fullHref}">Open in WREDD</a></p>`
+    : "";
   return `
     <div style="font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto;">
       <h2 style="margin:0 0 8px 0;">${args.title}</h2>
@@ -128,7 +155,8 @@ function buildEmailHtml(args: { title: string; body?: string | null; href?: stri
 }
 
 export async function notify(args: NotifyArgs) {
-  // 1) resolve recipients
+  // ── 1. Resolve recipient IDs ───────────────────────────────────────────────
+
   let recipientIds: string[] = [];
 
   if (args.recipients.kind === "PROJECT_ASSIGNEES_ACTIVE") {
@@ -147,14 +175,26 @@ export async function notify(args: NotifyArgs) {
   }
 
   if (args.recipients.kind === "DEPARTMENT_USERS") {
-    recipientIds = await getDepartmentUserIds(args.recipients.departmentId, args.recipients.workersOnly);
+    recipientIds = await getDepartmentUserIds(
+      args.recipients.departmentId,
+      args.recipients.workersOnly
+    );
     recipientIds = exclude(recipientIds, args.actorId);
+  }
+
+  if (args.recipients.kind === "SPECIFIC_USERS") {
+    // Filter out empty strings, then exclude actor
+    recipientIds = exclude(
+      args.recipients.userIds.filter(Boolean),
+      args.actorId
+    );
   }
 
   recipientIds = uniq(recipientIds);
   if (!recipientIds.length) return;
 
-  // 2) create in-app notifications
+  // ── 2. Create in-app notifications ────────────────────────────────────────
+
   const created = await prisma.$transaction(async (tx) => {
     const rows = await Promise.all(
       recipientIds.map((userId) =>
@@ -175,12 +215,14 @@ export async function notify(args: NotifyArgs) {
     return rows;
   });
 
-  // 3) queue email deliveries (only for assigned-project events)
+  // ── 3. Queue email deliveries ─────────────────────────────────────────────
+
   const gate = emailGateForType(args.type);
   if (!gate) return;
 
-  // Email scope must be project assignees only — enforce hard.
-  if (args.recipients.kind !== "PROJECT_ASSIGNEES_ACTIVE") return;
+  // Only send emails for project-assignee events or direct targeting
+  const kind = args.recipients.kind;
+  if (kind !== "PROJECT_ASSIGNEES_ACTIVE" && kind !== "SPECIFIC_USERS") return;
 
   const eligible = await getEmailEligibleRecipients(
     created.map((c) => c.userId),
@@ -190,7 +232,11 @@ export async function notify(args: NotifyArgs) {
   if (!eligible.length) return;
 
   const subject = args.title;
-  const html = buildEmailHtml({ title: args.title, body: args.body, href: args.href });
+  const html = buildEmailHtml({
+    title: args.title,
+    body: args.body,
+    href: args.href,
+  });
 
   await prisma.notificationDelivery.createMany({
     data: eligible.map((u) => ({
@@ -205,7 +251,7 @@ export async function notify(args: NotifyArgs) {
 }
 
 /**
- * Sender: call this from a cron route (recommended).
+ * Called from the cron route to flush pending email deliveries.
  */
 export async function sendPendingEmailDeliveries(limit = 25) {
   const pending = await prisma.notificationDelivery.findMany({
