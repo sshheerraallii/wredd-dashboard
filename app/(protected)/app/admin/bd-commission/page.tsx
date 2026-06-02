@@ -380,7 +380,7 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
           <Link
             key={t}
             href={qp(current, { tab: t, page: 1 })}
-            className={`px-3 py-1 rounded border text-sm ${tab === t ? "bg-black text-white" : "bg-white"}`}
+            className={`px-3 py-1 rounded border text-sm transition ${tab === t ? "bg-foreground text-background" : "bg-card text-muted-foreground hover:text-foreground"}`}
           >
             {t}
           </Link>
@@ -526,7 +526,7 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
           {pagerPages.map((p) => (
             <Link
               key={p}
-              className={`px-2 py-1 rounded border text-sm ${p === current.page ? "bg-black text-white" : ""}`}
+              className={`px-2 py-1 rounded border text-sm transition ${p === current.page ? "bg-foreground text-background" : "bg-card text-muted-foreground hover:text-foreground"}`}
               href={qp(current, { page: p })}
             >
               {p}

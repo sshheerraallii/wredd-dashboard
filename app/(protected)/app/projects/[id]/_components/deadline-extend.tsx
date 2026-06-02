@@ -19,7 +19,7 @@ export function DeadlineExtend({
   if (!canExtend) return null;
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-card p-4 space-y-3">
+    <div className="rounded-2xl border bg-card p-4 space-y-3">
       <div className="text-sm font-semibold">Extend deadline</div>
 
       <div className="flex gap-2">

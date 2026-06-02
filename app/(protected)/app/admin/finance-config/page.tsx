@@ -58,7 +58,7 @@ export default async function FinanceConfigPage({
       </div>
 
       {err ? (
-        <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
           {err}
         </div>
       ) : null}
@@ -140,7 +140,7 @@ export default async function FinanceConfigPage({
             {row && !row.finalizedAt ? (
               <form action={finalizeMonth}>
                 <input type="hidden" name="monthKey" value={selected} />
-                <button className="rounded-xl bg-black text-white px-4 py-2 text-sm hover:opacity-90">
+                <button className="rounded-xl bg-primary text-primary-foreground px-4 py-2 text-sm hover:bg-primary/90 transition-colors">
                   Finalize (Lock)
                 </button>
               </form>

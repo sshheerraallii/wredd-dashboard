@@ -125,7 +125,7 @@ const [allocatedHours, setAllocatedHours] = React.useState<string>(""); // onsit
    (!isOnsite(selected) || !!allocatedHours.trim());
 
   return (
-    <div className="rounded-xl border border-white/10 bg-card p-4 space-y-4">
+    <div className="rounded-xl border bg-card p-4 space-y-4">
       <div className="flex items-center justify-between gap-3">
         <div className="text-sm font-semibold">Assignments</div>
 
@@ -248,7 +248,7 @@ const [allocatedHours, setAllocatedHours] = React.useState<string>(""); // onsit
           assigned.map((a) => (
             <div
               key={a.userId}
-              className="flex items-center justify-between rounded-lg border border-white/10 px-3 py-2"
+              className="flex items-center justify-between rounded-lg border px-3 py-2"
             >
               <div>
                 <div className="text-sm">{a.fullName}</div>

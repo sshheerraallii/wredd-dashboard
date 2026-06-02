@@ -171,7 +171,7 @@ function ScoreRing({
   return (
     <div className="relative inline-flex items-center justify-center" style={{ width: size, height: size }}>
       <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#262d40" strokeWidth={5} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="hsl(var(--border))" strokeWidth={5} />
         <circle
           cx={size / 2}
           cy={size / 2}
@@ -251,7 +251,7 @@ function CreateTaskModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-md rounded-2xl border border-[#262d40] bg-[#181c27] p-6 shadow-2xl">
+      <div className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-2xl">
         <h2 className="mb-5 text-base font-semibold">Assign New Task</h2>
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <div>
@@ -260,7 +260,7 @@ function CreateTaskModal({
             </label>
             <input
               name="title"
-              className="w-full rounded-lg border border-[#262d40] bg-[#1e2333] px-3 py-2 text-sm outline-none focus:border-blue-500"
+              className="w-full rounded-lg border bg-muted px-3 py-2 text-sm outline-none focus:border-ring"
               placeholder="e.g. Post Eid poster on all social media"
             />
           </div>
@@ -272,7 +272,7 @@ function CreateTaskModal({
             <textarea
               name="description"
               rows={2}
-              className="w-full rounded-lg border border-[#262d40] bg-[#1e2333] px-3 py-2 text-sm outline-none focus:border-blue-500 resize-none"
+              className="w-full rounded-lg border bg-muted px-3 py-2 text-sm outline-none focus:border-ring resize-none"
               placeholder="Any details or context..."
             />
           </div>
@@ -284,7 +284,7 @@ function CreateTaskModal({
               </label>
               <select
                 name="assigneeId"
-                className="w-full rounded-lg border border-[#262d40] bg-[#1e2333] px-3 py-2 text-sm outline-none focus:border-blue-500"
+                className="w-full rounded-lg border bg-muted px-3 py-2 text-sm outline-none focus:border-ring"
               >
                 <option value="">Select person</option>
                 {opsUsers.map((u) => (
@@ -302,7 +302,7 @@ function CreateTaskModal({
                 name="timerHours"
                 type="number"
                 min={1}
-                className="w-full rounded-lg border border-[#262d40] bg-[#1e2333] px-3 py-2 text-sm outline-none focus:border-blue-500"
+                className="w-full rounded-lg border bg-muted px-3 py-2 text-sm outline-none focus:border-ring"
                 placeholder="e.g. 24"
               />
             </div>
@@ -317,8 +317,8 @@ function CreateTaskModal({
                 onClick={() => setType(t)}
                 className={`flex-1 rounded-lg border py-2 text-xs font-medium transition ${
                   type === t
-                    ? "border-blue-500 bg-blue-500/10 text-blue-400"
-                    : "border-[#262d40] bg-[#1e2333] text-muted-foreground hover:text-foreground"
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border bg-muted text-muted-foreground hover:text-foreground"
                 }`}
               >
                 {t === "ONE_OFF" ? "One-off" : "↻ Recurring daily"}
@@ -340,8 +340,8 @@ function CreateTaskModal({
                     onClick={() => toggleDay(idx)}
                     className={`flex-1 rounded-md py-1.5 text-xs font-medium transition ${
                       runOnDays.includes(idx)
-                        ? "bg-blue-500 text-white"
-                        : "bg-[#1e2333] text-muted-foreground border border-[#262d40] hover:text-foreground"
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground border hover:text-foreground"
                     }`}
                   >
                     {day}
@@ -352,21 +352,21 @@ function CreateTaskModal({
           )}
 
           {error && (
-            <p className="text-xs text-red-400">{error}</p>
+            <p className="text-xs text-destructive">{error}</p>
           )}
 
           <div className="flex gap-2 pt-1">
             <button
               type="submit"
               disabled={isPending}
-              className="flex-1 rounded-lg bg-blue-500 py-2 text-sm font-medium text-white transition hover:bg-blue-600 disabled:opacity-50"
+              className="flex-1 rounded-lg bg-primary py-2 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
             >
               {isPending ? "Assigning..." : "Assign Task"}
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg border border-[#262d40] px-4 py-2 text-sm text-muted-foreground transition hover:text-foreground"
+              className="rounded-lg border px-4 py-2 text-sm text-muted-foreground transition hover:text-foreground"
             >
               Cancel
             </button>
@@ -410,7 +410,7 @@ function ExtendModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-sm rounded-2xl border border-[#262d40] bg-[#181c27] p-6 shadow-2xl">
+      <div className="w-full max-w-sm rounded-2xl border bg-card p-6 shadow-2xl">
         <h2 className="mb-1 text-base font-semibold">Extend Deadline</h2>
         <p className="mb-5 text-xs text-muted-foreground">{instance.title}</p>
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
@@ -422,26 +422,26 @@ function ExtendModal({
               name="addHours"
               type="number"
               min={1}
-              className="w-full rounded-lg border border-[#262d40] bg-[#1e2333] px-3 py-2 text-sm outline-none focus:border-blue-500"
+              className="w-full rounded-lg border bg-muted px-3 py-2 text-sm outline-none focus:border-ring"
               placeholder="e.g. 12"
             />
           </div>
-          <div className="rounded-lg bg-[#1e2333] px-3 py-2 text-xs text-muted-foreground">
+          <div className="rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
             Extension is logged with your name and timestamp. The original deadline is preserved for scoring.
           </div>
-          {error && <p className="text-xs text-red-400">{error}</p>}
+          {error && <p className="text-xs text-destructive">{error}</p>}
           <div className="flex gap-2">
             <button
               type="submit"
               disabled={isPending}
-              className="flex-1 rounded-lg bg-blue-500 py-2 text-sm font-medium text-white transition hover:bg-blue-600 disabled:opacity-50"
+              className="flex-1 rounded-lg bg-primary py-2 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
             >
               {isPending ? "Extending..." : "Extend"}
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg border border-[#262d40] px-4 py-2 text-sm text-muted-foreground transition hover:text-foreground"
+              className="rounded-lg border px-4 py-2 text-sm text-muted-foreground transition hover:text-foreground"
             >
               Cancel
             </button>
@@ -471,7 +471,7 @@ function TaskCard({
 
   return (
     <div
-      className={`rounded-xl border border-[#262d40] bg-[#181c27] p-4 transition hover:border-[#3a4160] ${isDone ? "opacity-70" : ""}`}
+      className={`rounded-xl border bg-card p-4 transition hover:border-muted-foreground/40 ${isDone ? "opacity-70" : ""}`}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
@@ -534,7 +534,7 @@ function TaskCard({
 
           {/* Reopened info */}
           {instance.reopenedAt && (
-            <p className="mt-1 text-xs text-amber-400">
+            <p className="mt-1 text-xs text-amber-500 dark:text-amber-400">
               Reopened by {instance.reopenedBy?.fullName ?? "admin"} —{" "}
               {new Date(instance.reopenedAt).toLocaleDateString()}
             </p>
@@ -546,7 +546,7 @@ function TaskCard({
           {!isDone && isSuperAdmin && (
             <button
               onClick={() => onExtend(instance)}
-              className="rounded-lg border border-[#262d40] px-3 py-1.5 text-xs text-muted-foreground transition hover:bg-[#1e2333] hover:text-foreground"
+              className="rounded-lg border px-3 py-1.5 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground"
             >
               Extend
             </button>
@@ -554,7 +554,7 @@ function TaskCard({
           {isDone && isSuperAdmin && (
             <button
               onClick={() => onReopen(instance.id)}
-              className="rounded-lg border border-red-900/40 bg-red-500/10 px-3 py-1.5 text-xs text-red-400 transition hover:bg-red-500/20"
+              className="rounded-lg border-destructive/40/40 bg-red-500/10 px-3 py-1.5 text-xs text-destructive transition hover:bg-red-500/20"
             >
               Reopen
             </button>
@@ -636,7 +636,7 @@ export function AdminOpsTasksClient({
       )}
 
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-[#262d40] px-6 py-5">
+      <div className="flex items-center justify-between border-b border px-6 py-5">
         <div>
           <h1 className="text-lg font-semibold">Ops Tasks</h1>
           <p className="mt-0.5 text-sm text-muted-foreground">
@@ -645,7 +645,7 @@ export function AdminOpsTasksClient({
         </div>
         <button
           onClick={() => setShowCreate(true)}
-          className="rounded-lg bg-blue-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-600"
+          className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition hover:bg-primary/90"
         >
           + Assign Task
         </button>
@@ -653,7 +653,7 @@ export function AdminOpsTasksClient({
 
       {/* Top tabs */}
       <div className="px-6 pt-5">
-        <div className="flex w-fit gap-1 rounded-xl border border-[#262d40] bg-[#181c27] p-1">
+        <div className="flex w-fit gap-1 rounded-xl border bg-card p-1">
           {[
             { key: "tasks", label: "All Tasks" },
             { key: "performance", label: "Performance" },
@@ -666,7 +666,7 @@ export function AdminOpsTasksClient({
               }}
               className={`rounded-lg px-4 py-1.5 text-sm font-medium transition ${
                 tab === key
-                  ? "bg-[#1e2333] text-foreground shadow-sm"
+                  ? "bg-muted text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
@@ -683,7 +683,7 @@ export function AdminOpsTasksClient({
             {/* Filters row */}
             <div className="flex flex-wrap items-center gap-3">
               {/* Status tabs */}
-              <div className="flex gap-1 rounded-xl border border-[#262d40] bg-[#181c27] p-1">
+              <div className="flex gap-1 rounded-xl border bg-card p-1">
                 {[
                   { key: "pending", label: `Pending (${pendingCount})` },
                   { key: "completed", label: `Completed (${completedCount})` },
@@ -696,7 +696,7 @@ export function AdminOpsTasksClient({
                     }}
                     className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
                       statusFilter === key
-                        ? "bg-[#1e2333] text-foreground shadow-sm"
+                        ? "bg-muted text-foreground shadow-sm"
                         : "text-muted-foreground hover:text-foreground"
                     }`}
                   >
@@ -712,7 +712,7 @@ export function AdminOpsTasksClient({
                   setAssigneeFilter(e.target.value);
                   navigate({ assigneeId: e.target.value });
                 }}
-                className="rounded-lg border border-[#262d40] bg-[#181c27] px-3 py-1.5 text-xs text-muted-foreground outline-none focus:border-blue-500"
+                className="rounded-lg border bg-card px-3 py-1.5 text-xs text-muted-foreground outline-none focus:border-ring"
               >
                 <option value="">All members</option>
                 {opsUsers.map((u) => (
@@ -750,7 +750,7 @@ export function AdminOpsTasksClient({
           <div className="flex flex-col gap-5">
             {/* Range selector */}
             <div className="flex flex-wrap items-center gap-3">
-              <div className="flex gap-1 rounded-xl border border-[#262d40] bg-[#181c27] p-1">
+              <div className="flex gap-1 rounded-xl border bg-card p-1">
                 {[
                   { key: "month", label: "This Month" },
                   { key: "last", label: "Last Month" },
@@ -764,7 +764,7 @@ export function AdminOpsTasksClient({
                     }}
                     className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
                       perfRange === key
-                        ? "bg-[#1e2333] text-foreground shadow-sm"
+                        ? "bg-muted text-foreground shadow-sm"
                         : "text-muted-foreground hover:text-foreground"
                     }`}
                   >
@@ -779,14 +779,14 @@ export function AdminOpsTasksClient({
                     type="date"
                     value={customFrom}
                     onChange={(e) => setCustomFrom(e.target.value)}
-                    className="rounded-lg border border-[#262d40] bg-[#181c27] px-3 py-1.5 text-xs outline-none focus:border-blue-500"
+                    className="rounded-lg border bg-card px-3 py-1.5 text-xs outline-none focus:border-ring"
                   />
                   <span className="text-xs text-muted-foreground">to</span>
                   <input
                     type="date"
                     value={customTo}
                     onChange={(e) => setCustomTo(e.target.value)}
-                    className="rounded-lg border border-[#262d40] bg-[#181c27] px-3 py-1.5 text-xs outline-none focus:border-blue-500"
+                    className="rounded-lg border bg-card px-3 py-1.5 text-xs outline-none focus:border-ring"
                   />
                   <button
                     onClick={() =>
@@ -797,7 +797,7 @@ export function AdminOpsTasksClient({
                         tab: "performance",
                       })
                     }
-                    className="rounded-lg bg-blue-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-blue-600"
+                    className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition hover:bg-primary/90"
                   >
                     Apply
                   </button>
@@ -816,22 +816,22 @@ export function AdminOpsTasksClient({
                 {
                   label: "Completed",
                   value: perfSummary.totalCompleted,
-                  color: "text-green-400",
+                  color: "text-green-500 dark:text-green-400",
                 },
                 {
                   label: "On Time",
                   value: perfSummary.totalOnTime,
-                  color: "text-blue-400",
+                  color: "text-primary",
                 },
                 {
                   label: "Still Pending",
                   value: perfSummary.totalPending,
-                  color: "text-amber-400",
+                  color: "text-amber-500 dark:text-amber-400",
                 },
               ].map((s) => (
                 <div
                   key={s.label}
-                  className="rounded-xl border border-[#262d40] bg-[#181c27] p-4 text-center"
+                  className="rounded-xl border bg-card p-4 text-center"
                 >
                   <div className={`font-mono text-2xl font-bold ${s.color}`}>
                     {s.value}
@@ -856,7 +856,7 @@ export function AdminOpsTasksClient({
                   return (
                     <div
                       key={row.user.id}
-                      className="flex items-center gap-4 rounded-xl border border-[#262d40] bg-[#181c27] p-4 transition hover:border-[#3a4160]"
+                      className="flex items-center gap-4 rounded-xl border bg-card p-4 transition hover:border-muted-foreground/40"
                     >
                       <div
                         className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold"
@@ -888,7 +888,7 @@ export function AdminOpsTasksClient({
                           </div>
                         </div>
                         {/* Progress bar */}
-                        <div className="h-1.5 w-full rounded-full bg-[#262d40]">
+                        <div className="h-1.5 w-full rounded-full bg-border">
                           <div
                             className="h-1.5 rounded-full transition-all"
                             style={{

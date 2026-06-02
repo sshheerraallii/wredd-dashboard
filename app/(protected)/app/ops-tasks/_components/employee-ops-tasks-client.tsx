@@ -96,7 +96,7 @@ function ScoreRing({ pct, size = 64 }: { pct: number; size?: number }) {
           cy={size / 2}
           r={r}
           fill="none"
-          stroke="#262d40"
+          stroke="hsl(var(--border))"
           strokeWidth={5}
         />
         <circle
@@ -156,14 +156,14 @@ function CompleteModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-sm rounded-2xl border border-[#262d40] bg-[#181c27] p-6 shadow-2xl">
+      <div className="w-full max-w-sm rounded-2xl border bg-card p-6 shadow-2xl">
         <h2 className="mb-1 flex items-center gap-2 text-base font-semibold">
-          <span className="text-green-400">✓</span> Mark as Done
+          <span className="text-green-500 dark:text-green-400">✓</span> Mark as Done
         </h2>
         <p className="mb-4 text-sm text-muted-foreground">{instance.title}</p>
 
         {isLate && (
-          <div className="mb-4 rounded-lg border border-amber-900/40 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-400">
+          <div className="mb-4 rounded-lg border border-amber-900/40 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-500 dark:text-amber-400">
             ⚠ This task is overdue. Your score will reflect the late completion — but getting it done still counts.
           </div>
         )}
@@ -177,7 +177,7 @@ function CompleteModal({
               rows={3}
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              className="w-full resize-none rounded-lg border border-[#262d40] bg-[#1e2333] px-3 py-2 text-sm outline-none focus:border-blue-500"
+              className="w-full resize-none rounded-lg border bg-muted px-3 py-2 text-sm outline-none focus:border-ring"
               placeholder={
                 isLate
                   ? "What caused the delay?"
@@ -186,19 +186,19 @@ function CompleteModal({
             />
           </div>
 
-          {error && <p className="text-xs text-red-400">{error}</p>}
+          {error && <p className="text-xs text-destructive">{error}</p>}
 
           <div className="flex gap-2">
             <button
               onClick={handleSubmit}
               disabled={isPending}
-              className="flex-1 rounded-lg bg-green-500 py-2 text-sm font-medium text-white transition hover:bg-green-600 disabled:opacity-50"
+              className="flex-1 rounded-lg bg-primary py-2 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
             >
               {isPending ? "Saving..." : "Mark Complete"}
             </button>
             <button
               onClick={onClose}
-              className="rounded-lg border border-[#262d40] px-4 py-2 text-sm text-muted-foreground transition hover:text-foreground"
+              className="rounded-lg border px-4 py-2 text-sm text-muted-foreground transition hover:text-foreground"
             >
               Cancel
             </button>
@@ -231,7 +231,7 @@ function EmployeeTaskCard({
 
   return (
     <div
-      className={`rounded-xl border border-[#262d40] bg-[#181c27] p-4 transition hover:border-[#3a4160] ${
+      className={`rounded-xl border bg-card p-4 transition hover:border-muted-foreground/40 ${
         isDone ? "opacity-60" : ""
       }`}
     >
@@ -239,11 +239,11 @@ function EmployeeTaskCard({
         {/* Check circle */}
         <div className="mt-0.5 shrink-0">
           {isDone ? (
-            <div className="flex h-5 w-5 items-center justify-center rounded-full border border-green-500 bg-green-500/10 text-[10px] text-green-400">
+            <div className="flex h-5 w-5 items-center justify-center rounded-full border border-green-500 bg-green-500/10 text-[10px] text-green-500 dark:text-green-400">
               ✓
             </div>
           ) : (
-            <div className="h-5 w-5 rounded-full border border-[#3a4160]" />
+            <div className="h-5 w-5 rounded-full border border-muted-foreground/40" />
           )}
         </div>
 
@@ -302,7 +302,7 @@ function EmployeeTaskCard({
 
             {/* Extended note */}
             {instance.deadlineExtendedAt && !isDone && (
-              <span className="text-xs text-amber-400">
+              <span className="text-xs text-amber-500 dark:text-amber-400">
                 Deadline extended
               </span>
             )}
@@ -310,7 +310,7 @@ function EmployeeTaskCard({
 
           {/* Reopened warning */}
           {instance.reopenedAt && (
-            <p className="mt-1.5 text-xs text-amber-400">
+            <p className="mt-1.5 text-xs text-amber-500 dark:text-amber-400">
               ↩ Reopened by{" "}
               {instance.reopenedBy?.fullName ?? "admin"} — please re-complete
             </p>
@@ -335,7 +335,7 @@ function EmployeeTaskCard({
         {!isDone && (
           <button
             onClick={() => onComplete(instance)}
-            className="shrink-0 rounded-lg border border-[#262d40] px-3 py-1.5 text-xs text-muted-foreground transition hover:border-green-500/40 hover:bg-green-500/10 hover:text-green-400"
+            className="shrink-0 rounded-lg border px-3 py-1.5 text-xs text-muted-foreground transition hover:border-green-500/40 hover:bg-green-500/10 hover:text-green-500 dark:text-green-400"
           >
             Done
           </button>
@@ -371,7 +371,7 @@ export function EmployeeOpsTasksClient({
       )}
 
       {/* Header */}
-      <div className="border-b border-[#262d40] px-6 py-5">
+      <div className="border-b border px-6 py-5">
         <h1 className="text-lg font-semibold">My Tasks</h1>
         <p className="mt-0.5 text-sm text-muted-foreground">
           Stay on top of your daily work
@@ -379,7 +379,7 @@ export function EmployeeOpsTasksClient({
       </div>
 
       {/* Score banner */}
-      <div className="mx-6 mt-5 flex items-center gap-4 rounded-xl border border-[#262d40] bg-[#181c27] p-4">
+      <div className="mx-6 mt-5 flex items-center gap-4 rounded-xl border bg-card p-4">
         <ScoreRing pct={score.commitmentPct} size={64} />
         <div className="flex-1">
           <div className="text-sm font-semibold">This month's commitment</div>
@@ -408,7 +408,7 @@ export function EmployeeOpsTasksClient({
 
       {/* Tabs */}
       <div className="px-6 pt-4">
-        <div className="flex w-fit gap-1 rounded-xl border border-[#262d40] bg-[#181c27] p-1">
+        <div className="flex w-fit gap-1 rounded-xl border bg-card p-1">
           {[
             { key: "pending", label: `Pending (${pending.length})` },
             { key: "completed", label: `Completed (${completed.length})` },
@@ -422,7 +422,7 @@ export function EmployeeOpsTasksClient({
               }}
               className={`rounded-lg px-4 py-1.5 text-sm font-medium transition ${
                 tab === key
-                  ? "bg-[#1e2333] text-foreground shadow-sm"
+                  ? "bg-muted text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >

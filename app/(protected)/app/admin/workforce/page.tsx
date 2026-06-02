@@ -97,7 +97,7 @@ function LastAssignedCell({
 }) {
   if (days === null)
     return (
-      <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-100 px-2.5 py-0.5 text-xs text-gray-500">
+      <span className="inline-flex items-center rounded-full border bg-muted px-2.5 py-0.5 text-xs text-muted-foreground">
         Never assigned
       </span>
     );
@@ -105,7 +105,7 @@ function LastAssignedCell({
     return <span className="text-xs text-muted-foreground">Today</span>;
   if (days <= 7)
     return (
-      <span className="text-xs text-green-700 font-medium">{days}d ago</span>
+      <span className="text-xs text-green-700 dark:text-green-400 font-medium">{days}d ago</span>
     );
   if (days <= 14)
     return (
