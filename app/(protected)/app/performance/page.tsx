@@ -482,8 +482,12 @@ async function onsiteMonthlyAccuracyAvg(params: {
   const sums: Record<string, number> = {};
   for (const c of credits) sums[c.monthKey] = (sums[c.monthKey] ?? 0) + c.points;
 
+  // ✅ Only include months with actual credited projects
+  const monthsWithActivity = new Set(Object.keys(sums));
+
   const accuracies: number[] = [];
   for (const mk of monthKeys) {
+    if (!monthsWithActivity.has(mk)) continue;
     const achieved = sums[mk] ?? 0;
     const target = proratedMonthlyTarget({
       targetMonthlyPoints: params.targetMonthlyPoints,
@@ -625,8 +629,12 @@ async function onsiteAccuracyAvgForMonthKeys(params: {
   const sums: Record<string, number> = {};
   for (const c of credits) sums[c.monthKey] = (sums[c.monthKey] ?? 0) + c.points;
 
+  // ✅ Only include months with actual credited projects
+  const monthsWithActivity = new Set(Object.keys(sums));
+
   const accuracies: number[] = [];
   for (const mk of params.monthKeys) {
+    if (!monthsWithActivity.has(mk)) continue;
     const achieved = sums[mk] ?? 0;
     const target = proratedMonthlyTarget({
       targetMonthlyPoints: params.targetMonthlyPoints,

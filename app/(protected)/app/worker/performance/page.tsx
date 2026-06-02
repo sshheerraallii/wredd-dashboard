@@ -469,8 +469,15 @@ const completed =
       });
       const sums: Record<string, number> = {};
       for (const c of credits) sums[c.monthKey] = (sums[c.monthKey] ?? 0) + c.points;
+
+      // ✅ Only include months where the worker actually had credited projects.
+      // Months with no activity (no OnsitePointCredit rows) are excluded from
+      // the average — it's unfair to count a month where no projects were assigned.
+      const monthsWithActivity = new Set(Object.keys(sums));
+
       const accuracies: number[] = [];
       for (const k of monthKeys) {
+        if (!monthsWithActivity.has(k)) continue; // skip months with no credited projects
         const achieved = sums[k] ?? 0;
         const target = proratedMonthlyTarget({
           targetMonthlyPoints: me.targetMonthlyPoints,
@@ -510,14 +517,16 @@ const completed =
     const history = months.map((m) => {
       const g = grouped[m.key];
       const achieved = g?.points ?? 0;
+      const hasActivity = !!g && achieved > 0;
       const avgRating = g?.ratings?.length ? avg(g.ratings) : null;
       const t = proratedMonthlyTarget({
         targetMonthlyPoints: me.targetMonthlyPoints,
         joinedAt: me.joinedAt,
         monthKey: m.key,
       });
-      const acc = t > 0 ? Math.round((achieved / t) * 100) : null;
-      return { monthKey: m.key, achievedPoints: achieved, accuracy: acc, avgRating };
+      // Only show accuracy for months with actual credited projects
+      const acc = hasActivity && t > 0 ? Math.round((achieved / t) * 100) : null;
+      return { monthKey: m.key, achievedPoints: achieved, accuracy: acc, avgRating, hasActivity };
     });
 
     let allMonthKeys: string[] = [];
