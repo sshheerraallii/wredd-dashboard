@@ -91,31 +91,63 @@ function startOfDay(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
 }
 
+/**
+ * Count Mon–Fri days between two dates (both inclusive).
+ */
+function countWorkingDays(from: Date, to: Date): number {
+  let count = 0;
+  const cur = new Date(from);
+  while (cur <= to) {
+    const d = cur.getDay();
+    if (d !== 0 && d !== 6) count++;
+    cur.setDate(cur.getDate() + 1);
+  }
+  return count;
+}
+
+/**
+ * Returns the pro-rated monthly target for a given month.
+ *
+ * - Current month → pro-rated by working days elapsed (Mon–Fri) ÷ 25.
+ *   This stops the accuracy from tanking at the start of a month.
+ * - Past months → pro-rated by calendar days (only matters if the worker
+ *   joined mid-month; fully-worked months return the full target).
+ * - Join-date guard: if the worker joined after this month ends, returns 0.
+ */
 function proratedMonthlyTarget(params: {
   targetMonthlyPoints: number;
   joinedAt: Date;
   monthKey: string;
-}) {
+}): number {
   const T = params.targetMonthlyPoints;
   if (!T || T <= 0) return 0;
 
   const { start, end } = monthRangeFromKey(params.monthKey);
-  const D = daysInMonth(start);
+  const now = new Date();
+  const currentMonthKey = monthKeyOf(now);
+  const isCurrentMonth = params.monthKey === currentMonthKey;
 
   const joinDay = startOfDay(params.joinedAt);
-  if (joinDay < start) return T;
   if (joinDay >= end) return 0;
 
+  const effectiveStart = joinDay > start ? joinDay : start;
+
+  if (isCurrentMonth) {
+    const todayStart = startOfDay(now);
+    if (todayStart < effectiveStart) return 0;
+    const elapsed = countWorkingDays(effectiveStart, todayStart);
+    if (elapsed === 0) return 0;
+    return (T * elapsed) / 25;
+  }
+
+  // Past month
+  if (joinDay < start) return T;
+
+  const D = daysInMonth(start);
   const monthEndInclusive = new Date(end.getTime() - 1);
-  const activeStart = joinDay;
   const activeEnd = startOfDay(monthEndInclusive);
-
   const msPerDay = 24 * 60 * 60 * 1000;
-  const diffDays = Math.floor(
-    (activeEnd.getTime() - activeStart.getTime()) / msPerDay
-  );
-  const activeDays = diffDays + 1;
-
+  const activeDays = Math.floor((activeEnd.getTime() - joinDay.getTime()) / msPerDay) + 1;
   return (T * activeDays) / D;
 }
 

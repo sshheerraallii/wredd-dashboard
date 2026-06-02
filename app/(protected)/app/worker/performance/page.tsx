@@ -77,26 +77,64 @@ function startOfDay(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
 }
 
+/**
+ * Count Mon–Fri days between two dates (both inclusive).
+ */
+function countWorkingDays(from: Date, to: Date): number {
+  let count = 0;
+  const cur = new Date(from);
+  while (cur <= to) {
+    const d = cur.getDay();
+    if (d !== 0 && d !== 6) count++;
+    cur.setDate(cur.getDate() + 1);
+  }
+  return count;
+}
+
+/**
+ * Returns the pro-rated monthly target for a given month.
+ *
+ * - Current month → pro-rated by working days elapsed (Mon–Fri) ÷ 25.
+ *   This stops the accuracy from tanking at the start of a month.
+ * - Past months → pro-rated by calendar days (only matters if the worker
+ *   joined mid-month; fully-worked months return the full target).
+ * - Join-date guard: if the worker joined after this month ends, returns 0.
+ */
 function proratedMonthlyTarget(params: {
   targetMonthlyPoints: number;
   joinedAt: Date;
   monthKey: string;
-}) {
+}): number {
   const base = params.targetMonthlyPoints ?? 0;
   if (base <= 0) return 0;
 
   const { start, end } = monthRangeFromKey(params.monthKey);
+  const now = new Date();
+  const currentMonthKey = monthKeyOf(now);
+  const isCurrentMonth = params.monthKey === currentMonthKey;
 
-  if (params.joinedAt >= end) return 0;
-  if (params.joinedAt <= start) return base;
-
+  // Effective start = later of month start or joinedAt
   const joinDay = startOfDay(params.joinedAt);
+  if (joinDay >= end) return 0; // joined after this month entirely
+
+  const effectiveStart = joinDay > start ? joinDay : start;
+
+  if (isCurrentMonth) {
+    // Pro-rate by working days elapsed so far — prevents unfair 1% on June 2nd.
+    // Target is defined for 25 working days.
+    const todayStart = startOfDay(now);
+    if (todayStart < effectiveStart) return 0; // joined after today
+    const elapsed = countWorkingDays(effectiveStart, todayStart);
+    if (elapsed === 0) return 0; // first day of the month and it's a weekend
+    return (base * elapsed) / 25;
+  }
+
+  // Past month — use calendar-day pro-rating (only differs when joined mid-month)
+  if (joinDay <= start) return base;
   const totalDays = daysInMonth(start);
   const dayIndex = joinDay.getDate();
   const remainingDaysInclusive = totalDays - dayIndex + 1;
-  const ratio = remainingDaysInclusive / totalDays;
-
-  return base * ratio;
+  return base * (remainingDaysInclusive / totalDays);
 }
 
 function listMonthKeysInclusive(startMonth: Date, endDate: Date) {
