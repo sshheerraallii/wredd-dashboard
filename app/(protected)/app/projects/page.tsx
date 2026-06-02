@@ -7,6 +7,7 @@ import { getPrisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
 import { AnnouncementBanner } from "@/components/app/announcement-banner";
 import { AnnouncementBannerDismissable } from "@/components/app/announcement-banner-dismissable";
+import { markProjectSeenAction } from "@/lib/actions/mark-seen";
 
 const prisma = getPrisma();
 
@@ -47,7 +48,26 @@ function buildStatusWhere(tab: Tab) {
   return { status: "CANCELLED" as const };
 }
 
-function TabsRow({ tab, scope, q }: { tab: Tab; scope: Scope; q: string }) {
+function statusToBucket(status: string): Tab | null {
+  if (status === "UNASSIGNED") return "unassigned";
+  if (status === "IN_PROGRESS" || status === "REVISION") return "active";
+  if (status === "DELIVERED") return "delivered";
+  if (status === "COMPLETED") return "completed";
+  if (status === "CANCELLED") return "cancelled";
+  return null;
+}
+
+function TabsRow({
+  tab,
+  scope,
+  q,
+  unreadCounts,
+}: {
+  tab: Tab;
+  scope: Scope;
+  q: string;
+  unreadCounts: Record<string, number>;
+}) {
   const items: { key: Tab; label: string }[] = [
     { key: "unassigned", label: "Unassigned" },
     { key: "active", label: "Active" },
@@ -69,18 +89,24 @@ function TabsRow({ tab, scope, q }: { tab: Tab; scope: Scope; q: string }) {
     <div className="flex flex-wrap gap-2">
       {items.map((it) => {
         const active = tab === it.key;
+        const count = unreadCounts[it.key] ?? 0;
         return (
           <Link
             key={it.key}
             href={qp(it.key)}
             className={[
-              "rounded-full px-4 py-2 text-sm border transition",
+              "inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-sm border transition",
               active
                 ? "bg-muted text-foreground border-muted-foreground/30"
                 : "bg-card text-muted-foreground hover:text-foreground hover:bg-muted/20",
             ].join(" ")}
           >
             {it.label}
+            {count > 0 && (
+              <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold text-primary-foreground leading-none">
+                {count}
+              </span>
+            )}
           </Link>
         );
       })}
@@ -102,12 +128,12 @@ function ScopeRow({
   const items: { key: Scope; label: string }[] =
     role === "BUSINESS_DEVELOPER"
       ? [
-          { key: "mine", label: "My Projects" }, // bdOwnerId = me
+          { key: "mine", label: "My Projects" },
           { key: "all", label: "All Projects" },
         ]
       : [
           { key: "all", label: "All Projects" },
-          { key: "mine", label: "Created by me" }, // createdById = me
+          { key: "mine", label: "Created by me" },
         ];
 
   const qp = (nextScope: Scope) => {
@@ -177,26 +203,20 @@ function Pagination({
       <div className="text-xs text-muted-foreground">
         Page {page} • Showing {from}-{to} of {total}
       </div>
-
       <div className="flex gap-2">
         {hasPrev ? (
           <Button asChild variant="secondary">
             <Link href={build(page - 1)}>Prev</Link>
           </Button>
         ) : (
-          <Button variant="secondary" disabled>
-            Prev
-          </Button>
+          <Button variant="secondary" disabled>Prev</Button>
         )}
-
         {hasNext ? (
           <Button asChild variant="secondary">
             <Link href={build(page + 1)}>Next</Link>
           </Button>
         ) : (
-          <Button variant="secondary" disabled>
-            Next
-          </Button>
+          <Button variant="secondary" disabled>Next</Button>
         )}
       </div>
     </div>
@@ -207,10 +227,8 @@ function looksLikeCuid(s: string) {
   return /^c[a-z0-9]{10,}$/i.test(s);
 }
 
-// USD formatter (no symbol). Decimal-safe.
 function fmtUSD(v: any) {
   if (v == null) return "—";
-
   const n =
     typeof v === "object" && typeof v.toString === "function"
       ? Number.parseFloat(v.toString())
@@ -219,9 +237,7 @@ function fmtUSD(v: any) {
         : typeof v === "string"
           ? Number.parseFloat(v)
           : NaN;
-
   if (!Number.isFinite(n)) return "—";
-
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(n);
 }
 
@@ -232,20 +248,16 @@ function dueInHM(p: {
   timerAccumulatedSeconds: number;
 }) {
   const totalSeconds = Math.max(0, Math.floor((p.deadlineHours || 0) * 3600));
-
   const base = p.timerAccumulatedSeconds || 0;
   const liveAdd =
     p.timerRunning && p.timerLastResumedAt
       ? Math.max(0, Math.floor((Date.now() - p.timerLastResumedAt.getTime()) / 1000))
       : 0;
-
   const used = base + liveAdd;
   const remaining = totalSeconds - used;
-
   const abs = Math.abs(remaining);
   const h = Math.floor(abs / 3600);
   const m = Math.floor((abs % 3600) / 60);
-
   if (remaining < 0) return `Overdue ${h}h ${m}m`;
   return `${h}h ${m}m`;
 }
@@ -271,16 +283,16 @@ export default async function ProjectsPage({
   const PAGE_SIZE = 20;
   const skip = (page - 1) * PAGE_SIZE;
 
-  const statusWhere = buildStatusWhere(tab);
-  const where: any = { ...statusWhere };
-
-  // Scope semantics:
-  // - BD: mine => bdOwnerId = me
-  // - Admin/Manager: mine => createdById = me
+  // ── Scope base (no status, no search) — for tab counts ───────────────────
+  const scopeBaseWhere: any = {};
   if (scope === "mine") {
-    if (role === "BUSINESS_DEVELOPER") where.bdOwnerId = userId;
-    else where.createdById = userId;
+    if (role === "BUSINESS_DEVELOPER") scopeBaseWhere.bdOwnerId = userId;
+    else scopeBaseWhere.createdById = userId;
   }
+
+  // ── Full where (status + scope + search) — for current page ──────────────
+  const statusWhere = buildStatusWhere(tab);
+  const where: any = { ...statusWhere, ...scopeBaseWhere };
 
   if (q) {
     where.OR = [
@@ -289,12 +301,39 @@ export default async function ProjectsPage({
     ];
   }
 
-  // Finance visibility:
-  // This page is only for admin/manager/bd anyway, but keep a clear gate for columns.
-  const canSeeFinancials = true;
   const canEditFinancials =
     role === "SUPER_ADMIN" || role === "MANAGER" || role === "BUSINESS_DEVELOPER";
 
+  // ── Fetch tab unread counts (all statuses, scope only, no search) ─────────
+  const allForCounts = await prisma.project.findMany({
+    where: scopeBaseWhere,
+    select: {
+      status: true,
+      updatedAt: true,
+      messages: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { createdAt: true },
+      },
+      lastSeenBy: {
+        where: { userId },
+        select: { seenAt: true },
+        take: 1,
+      },
+    },
+  });
+
+  const unreadCounts: Record<string, number> = {};
+  for (const p of allForCounts) {
+    const latestActivity = p.messages[0]?.createdAt ?? p.updatedAt;
+    const seenAt = p.lastSeenBy[0]?.seenAt;
+    const isUnread = !seenAt || latestActivity > seenAt;
+    if (!isUnread) continue;
+    const bucket = statusToBucket(p.status);
+    if (bucket) unreadCounts[bucket] = (unreadCounts[bucket] ?? 0) + 1;
+  }
+
+  // ── Current page projects ─────────────────────────────────────────────────
   const [total, projects] = await Promise.all([
     prisma.project.count({ where }),
     prisma.project.findMany({
@@ -306,19 +345,15 @@ export default async function ProjectsPage({
         id: true,
         title: true,
         status: true,
-
         deadlineHours: true,
         timerRunning: true,
         timerLastResumedAt: true,
         timerAccumulatedSeconds: true,
-
         createdAt: true,
+        updatedAt: true,
         department: { select: { name: true } },
         createdBy: { select: { fullName: true } },
-
         bdOwner: { select: { fullName: true } },
-
-        // ✅ Step 3 finance data (separate model)
         finance: {
           select: {
             workType: true,
@@ -326,6 +361,17 @@ export default async function ProjectsPage({
             priceUsd: true,
             platformFeePercent: true,
           },
+        },
+        // ✅ For unread indicator
+        messages: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: { createdAt: true },
+        },
+        lastSeenBy: {
+          where: { userId },
+          select: { seenAt: true },
+          take: 1,
         },
       },
     }),
@@ -341,17 +387,16 @@ export default async function ProjectsPage({
         <div>
           <h1 className="text-xl font-semibold">Projects</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Filter by status, scope, and search. Finance fields come from ProjectFinance.
+            Filter by status, scope, and search.
           </p>
         </div>
-
         <Button asChild>
           <Link href="/app/projects/new">Create Project</Link>
         </Button>
       </div>
 
       <div className="space-y-3">
-        <TabsRow tab={tab} scope={scope} q={q} />
+        <TabsRow tab={tab} scope={scope} q={q} unreadCounts={unreadCounts} />
         <ScopeRow tab={tab} scope={scope} q={q} role={role} />
       </div>
 
@@ -359,18 +404,13 @@ export default async function ProjectsPage({
         <input type="hidden" name="tab" value={tab} />
         <input type="hidden" name="scope" value={scope} />
         <input type="hidden" name="page" value="1" />
-
         <input
           name="q"
           defaultValue={q}
           placeholder="Search by title (or paste project id)…"
           className="w-full rounded-lg border bg-card px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-muted-foreground/30"
         />
-
-        <Button type="submit" variant="secondary">
-          Search
-        </Button>
-
+        <Button type="submit" variant="secondary">Search</Button>
         {q ? (
           <Button asChild variant="ghost">
             <Link href={`/app/projects?tab=${tab}&scope=${scope}&page=1`}>Clear</Link>
@@ -396,15 +436,18 @@ export default async function ProjectsPage({
             {projects.map((p: any) => {
               const finance = p.finance ?? null;
 
-              const financeLabel = !canSeeFinancials
-                ? "—"
-                : finance
-                  ? [
-                      finance.workType ?? "—",
-                      finance.portal ?? "—",
-                      finance.priceUsd != null ? `USD ${fmtUSD(finance.priceUsd)}` : "USD —",
-                    ].join(" • ")
-                  : "Missing finance";
+              const financeLabel = finance
+                ? [
+                    finance.workType ?? "—",
+                    finance.portal ?? "—",
+                    finance.priceUsd != null ? `USD ${fmtUSD(finance.priceUsd)}` : "USD —",
+                  ].join(" • ")
+                : "Missing finance";
+
+              // ✅ Unread indicator
+              const latestActivity = p.messages[0]?.createdAt ?? p.updatedAt;
+              const seenAt = p.lastSeenBy[0]?.seenAt;
+              const isUnread = !seenAt || latestActivity > seenAt;
 
               return (
                 <div
@@ -412,18 +455,37 @@ export default async function ProjectsPage({
                   className="grid grid-cols-12 gap-3 px-4 py-3 hover:bg-muted/30 transition-colors"
                 >
                   <div className="col-span-4 min-w-0">
-                    <div className="text-sm font-medium truncate">{p.title}</div>
-                    <div className="text-xs text-muted-foreground truncate">
+                    <div className="flex items-center gap-2">
+                      {isUnread && (
+                        <span
+                          className="h-2 w-2 flex-shrink-0 rounded-full bg-primary"
+                          title="Unread activity"
+                        />
+                      )}
+                      <div className="text-sm font-medium truncate">{p.title}</div>
+                    </div>
+                    <div className="text-xs text-muted-foreground truncate mt-0.5">
                       {p.createdBy.fullName} • {p.department.name}
                       {p.bdOwner?.fullName ? ` • BD: ${p.bdOwner.fullName}` : ""}
                     </div>
+                    {isUnread && (
+                      <form action={markProjectSeenAction} className="mt-1">
+                        <input type="hidden" name="projectId" value={p.id} />
+                        <button
+                          type="submit"
+                          className="text-[11px] text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors"
+                        >
+                          Mark as read
+                        </button>
+                      </form>
+                    )}
                   </div>
 
                   <div className="col-span-2">
                     <div className="text-sm">{financeLabel}</div>
                     {canEditFinancials && finance?.platformFeePercent != null ? (
                       <div className="text-xs text-muted-foreground">
-                        Fee: USD {fmtUSD(finance.platformFeePercent)}
+                        Fee: {fmtUSD(finance.platformFeePercent)}%
                       </div>
                     ) : null}
                   </div>
@@ -434,7 +496,7 @@ export default async function ProjectsPage({
 
                   <div className="col-span-2 flex justify-end">
                     <Button asChild size="sm" variant="secondary">
-                      <Link href={`/app/projects/${p.id}`}>View project page</Link>
+                      <Link href={`/app/projects/${p.id}`}>View</Link>
                     </Button>
                   </div>
                 </div>

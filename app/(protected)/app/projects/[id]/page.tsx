@@ -13,6 +13,7 @@ import { RatingCard } from "./_components/rating-card";
 import { OnsiteFinalizeCard } from "./_components/onsite-finalize-card";
 import { WatchToggle } from "./_components/watch-toggle";
 import { DeliverDialog } from "./_components/deliver-dialog";
+import { markSeenForUser } from "@/lib/actions/mark-seen";
 
 const prisma = getPrisma();
 
@@ -140,6 +141,9 @@ export default async function ProjectPage({ params }: { params: { id: string } }
     : null;
 
   const isWatched = !!watcherRow;
+
+  // ✅ Auto-mark this project as seen when user opens the page
+  await markSeenForUser(userId, base.id);
 
   // 3) Now fetch full project details (safe)
   const project = await prisma.project.findUnique({

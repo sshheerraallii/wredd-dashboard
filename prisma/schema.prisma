@@ -210,6 +210,8 @@ model User {
   notificationPreferences NotificationPreference?
 
 // Ops Tasks
+  projectLastSeen     ProjectLastSeen[]
+
   opsTasksAssigned    OpsTask[]         @relation("OpsTaskAssignee")
   opsTasksCreated     OpsTask[]         @relation("OpsTaskCreatedBy")
   opsTaskInstances    OpsTaskInstance[] @relation("OpsTaskInstanceAssignee")
@@ -383,6 +385,8 @@ model Project {
 
   onsiteRating  OnsiteProjectRating?
   onsiteCredits OnsitePointCredit[]
+
+  lastSeenBy    ProjectLastSeen[]
 
   @@index([departmentId])
   @@index([status])
@@ -910,6 +914,27 @@ model SystemSetting {
 enum OpsTaskType {
   ONE_OFF
   RECURRING
+}
+
+/**
+ * =========================
+ * PROJECT LAST SEEN
+ * Tracks when each user last opened a project page.
+ * Used to show unread indicators on project index cards.
+ * =========================
+ */
+
+model ProjectLastSeen {
+  userId    String
+  projectId String
+  seenAt    DateTime
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@id([userId, projectId])
+  @@index([userId])
+  @@index([projectId])
 }
 
 model OpsTask {

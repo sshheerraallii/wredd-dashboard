@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { getPrisma } from "@/lib/prisma";
 import { readSession } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
+import { notify } from "@/lib/notify";
 
 const prisma = getPrisma();
 
@@ -33,7 +34,6 @@ const DeliverySchema = z.object({
       try {
         const u = new URL(v);
         const host = u.hostname.toLowerCase();
-        // allow drive.google.com and docs.google.com
         if (host !== "drive.google.com" && host !== "docs.google.com") return false;
         return u.protocol === "https:";
       } catch {
@@ -70,11 +70,11 @@ export async function deliverProject(formData: FormData) {
 
   if (!isWorker(role)) backWithError(projectId, "Only workers can deliver projects.");
 
-  // Fetch project + verify caller is currently assigned (unassignedAt = null)
   const project = await prisma.project.findUnique({
     where: { id: projectId },
     select: {
       id: true,
+      title: true, // ✅ needed for notification
       status: true,
       timerRunning: true,
       timerLastResumedAt: true,
@@ -94,7 +94,7 @@ export async function deliverProject(formData: FormData) {
   const now = new Date();
 
   await prisma.$transaction(async (tx) => {
-    // 1) Log DELIVERY message (use schema fields properly)
+    // 1) Log DELIVERY message
     await tx.projectMessage.create({
       data: {
         projectId,
@@ -102,12 +102,10 @@ export async function deliverProject(formData: FormData) {
         createdById: userId,
         linkUrl: driveUrl,
         content: note,
-        // meta is optional; keep empty unless you want structured data later
-        // meta: { driveUrl },
       },
     });
 
-    // 2) Pause timer if running (DELIVERED should pause)
+    // 2) Pause timer if running
     let timerAccumulatedSeconds = project.timerAccumulatedSeconds ?? 0;
     let timerRunning = project.timerRunning ?? false;
     let timerLastResumedAt = project.timerLastResumedAt;
@@ -118,7 +116,7 @@ export async function deliverProject(formData: FormData) {
       timerLastResumedAt = null;
     }
 
-  // 3) Update status to DELIVERED
+    // 3) Update status to DELIVERED
     await tx.project.update({
       where: { id: projectId },
       data: {
@@ -130,18 +128,26 @@ export async function deliverProject(formData: FormData) {
       },
     });
 
-    // 4) Optional: activity log (you have ProjectActivity)
+    // 4) Activity log
     await tx.projectActivity.create({
       data: {
         projectId,
         actorId: userId,
         action: "DELIVERED",
-        data: {
-          driveUrl,
-          noteLength: note.length,
-        },
+        data: { driveUrl, noteLength: note.length },
       },
     });
+  });
+
+  // ✅ Notify watchers + other assignees (actor excluded automatically)
+  await notify({
+    type: "PROJECT_STATUS_CHANGED",
+    projectId,
+    actorId: userId,
+    title: `Project Delivered: ${project.title}`,
+    body: `The project has been marked as delivered. Review the Google Drive link and delivery notes in the project chat.`,
+    href: `/app/projects/${projectId}`,
+    recipients: { kind: "PROJECT_AUDIENCE" },
   });
 
   revalidatePath(`/app/projects/${projectId}`);

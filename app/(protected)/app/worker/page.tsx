@@ -1,4 +1,4 @@
-// app/(protected)/app/worker/projects/page.tsx
+// app/(protected)/app/worker/page.tsx
 
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -7,6 +7,7 @@ import { getPrisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
 import { AnnouncementBanner } from "@/components/app/announcement-banner";
 import { AnnouncementBannerDismissable } from "@/components/app/announcement-banner-dismissable";
+import { markProjectSeenAction } from "@/lib/actions/mark-seen";
 
 const prisma = getPrisma();
 
@@ -28,7 +29,15 @@ function parsePage(input: string | undefined) {
   return Math.floor(n);
 }
 
-function TabsRow({ tab, q }: { tab: Tab; q: string }) {
+function TabsRow({
+  tab,
+  q,
+  unreadCounts,
+}: {
+  tab: Tab;
+  q: string;
+  unreadCounts: Record<string, number>;
+}) {
   const items: { key: Tab; label: string }[] = [
     { key: "unassigned", label: "Unassigned" },
     { key: "active", label: "Active" },
@@ -49,18 +58,24 @@ function TabsRow({ tab, q }: { tab: Tab; q: string }) {
     <div className="flex flex-wrap gap-2">
       {items.map((it) => {
         const active = tab === it.key;
+        const count = unreadCounts[it.key] ?? 0;
         return (
           <Link
             key={it.key}
             href={hrefFor(it.key)}
             className={[
-              "rounded-full px-4 py-2 text-sm border transition",
+              "inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-sm border transition",
               active
                 ? "bg-muted text-foreground border-muted-foreground/30"
                 : "bg-card text-muted-foreground hover:text-foreground hover:bg-muted/20",
             ].join(" ")}
           >
             {it.label}
+            {count > 0 && (
+              <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold text-primary-foreground leading-none">
+                {count}
+              </span>
+            )}
           </Link>
         );
       })}
@@ -89,7 +104,7 @@ function Pagination({
     params.set("tab", tab);
     if (q) params.set("q", q);
     params.set("page", String(p));
-    return `/app/worker/projects?${params.toString()}`;
+    return `/app/worker?${params.toString()}`;
   };
 
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
@@ -100,26 +115,20 @@ function Pagination({
       <div className="text-xs text-muted-foreground">
         Page {page} • Showing {from}-{to} of {total}
       </div>
-
       <div className="flex gap-2">
         {hasPrev ? (
           <Button asChild variant="secondary">
             <Link href={build(page - 1)}>Prev</Link>
           </Button>
         ) : (
-          <Button variant="secondary" disabled>
-            Prev
-          </Button>
+          <Button variant="secondary" disabled>Prev</Button>
         )}
-
         {hasNext ? (
           <Button asChild variant="secondary">
             <Link href={build(page + 1)}>Next</Link>
           </Button>
         ) : (
-          <Button variant="secondary" disabled>
-            Next
-          </Button>
+          <Button variant="secondary" disabled>Next</Button>
         )}
       </div>
     </div>
@@ -189,6 +198,74 @@ export default async function WorkerProjectsPage({
   });
   const deptIds = deptLinks.map((d) => d.departmentId);
 
+  // ── Tab unread counts ─────────────────────────────────────────────────────
+  // Fetch all projects visible to this worker (assigned + unassigned in dept)
+  const allVisible = await prisma.project.findMany({
+    where: {
+      OR: [
+        // Projects they're assigned to (any outcome)
+        { assignments: { some: { userId } } },
+        // Unassigned projects in their departments
+        {
+          status: "UNASSIGNED",
+          departmentId: { in: deptIds.length ? deptIds : ["__none__"] },
+        },
+      ],
+    },
+    select: {
+      status: true,
+      updatedAt: true,
+      messages: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { createdAt: true },
+      },
+      lastSeenBy: {
+        where: { userId },
+        select: { seenAt: true },
+        take: 1,
+      },
+      assignments: {
+        where: { userId },
+        select: { outcome: true, unassignedAt: true },
+        take: 1,
+      },
+    },
+  });
+
+  const unreadCounts: Record<string, number> = {};
+  for (const p of allVisible) {
+    const latestActivity = p.messages[0]?.createdAt ?? p.updatedAt;
+    const seenAt = p.lastSeenBy[0]?.seenAt;
+    const isUnread = !seenAt || latestActivity > seenAt;
+    if (!isUnread) continue;
+
+    const assignment = p.assignments[0];
+    let bucket: Tab | null = null;
+
+    if (p.status === "UNASSIGNED" && !assignment) {
+      bucket = "unassigned";
+    } else if (
+      (p.status === "IN_PROGRESS" || p.status === "REVISION") &&
+      assignment?.unassignedAt === null
+    ) {
+      bucket = "active";
+    } else if (p.status === "DELIVERED" && assignment?.unassignedAt === null) {
+      bucket = "delivered";
+    } else if (
+      p.status === "COMPLETED" &&
+      assignment?.unassignedAt === null &&
+      assignment?.outcome !== "CANCELLED"
+    ) {
+      bucket = "completed";
+    } else if (p.status === "CANCELLED" || assignment?.outcome === "CANCELLED") {
+      bucket = "cancelled";
+    }
+
+    if (bucket) unreadCounts[bucket] = (unreadCounts[bucket] ?? 0) + 1;
+  }
+
+  // ── Current tab where clause ──────────────────────────────────────────────
   const where: any = {};
 
   if (tab === "unassigned") {
@@ -204,10 +281,6 @@ export default async function WorkerProjectsPage({
     where.status = "COMPLETED";
     where.assignments = { some: { userId, unassignedAt: null } };
   } else if (tab === "cancelled") {
-    // Two cases:
-    // 1. Project was fully cancelled while worker was still assigned
-    // 2. Worker was individually cancelled-for-worker (outcome=CANCELLED)
-    //    — project may still be active for others
     where.OR = [
       {
         status: "CANCELLED",
@@ -219,7 +292,6 @@ export default async function WorkerProjectsPage({
     ];
   }
 
-  // Search: when OR is already set, wrap in AND to avoid overriding it
   if (q) {
     if (where.OR) {
       where.AND = [
@@ -243,24 +315,31 @@ export default async function WorkerProjectsPage({
         id: true,
         title: true,
         status: true,
-
         deadlineHours: true,
         timerRunning: true,
         timerLastResumedAt: true,
         timerAccumulatedSeconds: true,
-
+        updatedAt: true,
         department: { select: { name: true } },
-
         paymentLines: {
           where: { userId },
           select: { amount: true },
           take: 1,
         },
-
-        // Needed for cancelled tab: detect cancelled-for-worker vs project-cancelled
         assignments: {
           where: { userId },
           select: { outcome: true, unassignedAt: true },
+          take: 1,
+        },
+        // ✅ For unread indicator
+        messages: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: { createdAt: true },
+        },
+        lastSeenBy: {
+          where: { userId },
+          select: { seenAt: true },
           take: 1,
         },
       },
@@ -274,13 +353,13 @@ export default async function WorkerProjectsPage({
       </AnnouncementBannerDismissable>
 
       <div>
-        <h1 className="text-xl font-semibold">Worker Projects</h1>
+        <h1 className="text-xl font-semibold">My Projects</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Tabs are status-based. "Active" = IN_PROGRESS + REVISION. Search applies to the current tab.
+          Tabs are status-based. Active = IN_PROGRESS + REVISION.
         </p>
       </div>
 
-      <TabsRow tab={tab} q={q} />
+      <TabsRow tab={tab} q={q} unreadCounts={unreadCounts} />
 
       <form
         className="flex flex-col gap-2 sm:flex-row sm:items-center"
@@ -289,18 +368,13 @@ export default async function WorkerProjectsPage({
       >
         <input type="hidden" name="tab" value={tab} />
         <input type="hidden" name="page" value="1" />
-
         <input
           name="q"
           defaultValue={q}
           placeholder="Search by title…"
           className="w-full rounded-lg border bg-card px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-muted-foreground/30"
         />
-
-        <Button type="submit" variant="secondary">
-          Search
-        </Button>
-
+        <Button type="submit" variant="secondary">Search</Button>
         {q ? (
           <Button asChild variant="ghost">
             <Link href={`/app/worker?tab=${tab}&page=1`}>Clear</Link>
@@ -328,15 +402,14 @@ export default async function WorkerProjectsPage({
             {projects.map((p: any) => {
               const myLine = p.paymentLines?.[0] ?? null;
               const myAssignment = p.assignments?.[0] ?? null;
-
-              // Determine the display status label
               const isCancelledForWorker = myAssignment?.outcome === "CANCELLED";
-              const statusLabel = isCancelledForWorker
-                ? "Cancelled (for you)"
-                : p.status;
-
-              // On cancelled tab: no link to project detail page
+              const statusLabel = isCancelledForWorker ? "Cancelled (for you)" : p.status;
               const isCancelledTab = tab === "cancelled";
+
+              // ✅ Unread indicator
+              const latestActivity = p.messages[0]?.createdAt ?? p.updatedAt;
+              const seenAt = p.lastSeenBy[0]?.seenAt;
+              const isUnread = !seenAt || latestActivity > seenAt;
 
               return (
                 <div
@@ -344,10 +417,29 @@ export default async function WorkerProjectsPage({
                   className="grid grid-cols-12 gap-3 px-4 py-3 hover:bg-muted/30 transition-colors"
                 >
                   <div className="col-span-4">
-                    <div className="text-sm font-medium">{p.title}</div>
-                    <div className="text-xs text-muted-foreground">
+                    <div className="flex items-center gap-2">
+                      {isUnread && (
+                        <span
+                          className="h-2 w-2 flex-shrink-0 rounded-full bg-primary"
+                          title="Unread activity"
+                        />
+                      )}
+                      <div className="text-sm font-medium">{p.title}</div>
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
                       {p.department.name}
                     </div>
+                    {isUnread && (
+                      <form action={markProjectSeenAction} className="mt-1">
+                        <input type="hidden" name="projectId" value={p.id} />
+                        <button
+                          type="submit"
+                          className="text-[11px] text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors"
+                        >
+                          Mark as read
+                        </button>
+                      </form>
+                    )}
                   </div>
 
                   <div className="col-span-2 text-sm">
@@ -374,13 +466,12 @@ export default async function WorkerProjectsPage({
 
                   <div className="col-span-2 flex justify-end">
                     {isCancelledTab ? (
-                      // No link on cancelled tab — access to project detail is blocked
                       <span className="text-xs text-muted-foreground italic">
                         No access
                       </span>
                     ) : (
                       <Button asChild size="sm" variant="secondary">
-                        <Link href={`/app/projects/${p.id}`}>View project page</Link>
+                        <Link href={`/app/projects/${p.id}`}>View</Link>
                       </Button>
                     )}
                   </div>

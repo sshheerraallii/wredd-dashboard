@@ -16,9 +16,9 @@ type NotifyArgs = {
 
   recipients:
     | { kind: "PROJECT_ASSIGNEES_ACTIVE" }
-    | { kind: "PROJECT_AUDIENCE" } // assignees + watchers (in-app)
+    | { kind: "PROJECT_AUDIENCE" } // assignees + watchers (in-app AND email)
     | { kind: "DEPARTMENT_USERS"; departmentId: string; workersOnly?: boolean }
-    | { kind: "SPECIFIC_USERS"; userIds: string[] }; // ops tasks + direct targeting
+    | { kind: "SPECIFIC_USERS"; userIds: string[] };
 };
 
 function uniq(ids: string[]) {
@@ -35,7 +35,6 @@ async function getProjectAssigneeUserIds(projectId: string) {
     where: { projectId, unassignedAt: null },
     select: { userId: true, user: { select: { archivedAt: true } } },
   });
-
   return rows.filter((r) => !r.user.archivedAt).map((r) => r.userId);
 }
 
@@ -44,7 +43,6 @@ async function getProjectWatcherUserIds(projectId: string) {
     where: { projectId },
     select: { userId: true, user: { select: { archivedAt: true } } },
   });
-
   return rows.filter((r) => !r.user.archivedAt).map((r) => r.userId);
 }
 
@@ -56,7 +54,6 @@ async function getDepartmentUserIds(departmentId: string, workersOnly?: boolean)
       user: { select: { archivedAt: true, role: true } },
     },
   });
-
   return rows
     .filter((r) => !r.user.archivedAt)
     .filter((r) =>
@@ -67,15 +64,8 @@ async function getDepartmentUserIds(departmentId: string, workersOnly?: boolean)
     .map((r) => r.userId);
 }
 
-/**
- * Maps a notification type to the preference column that gates its email.
- * Returns null = no email for this type (in-app only).
- */
 function emailGateForType(type: NotificationType): string | null {
-  // In-app only
   if (type === "PROJECT_CREATED_UNASSIGNED") return null;
-
-  // Project events
   if (type === "PROJECT_MESSAGE") return "emailProjectMessages";
   if (type === "PROJECT_STATUS_CHANGED") return "emailProjectStatus";
   if (type === "PROJECT_COMPLETED" || type === "PROJECT_CANCELLED")
@@ -83,12 +73,9 @@ function emailGateForType(type: NotificationType): string | null {
   if (type === "PROJECT_RATED") return "emailProjectRatings";
   if (type === "ASSIGNMENT_ADDED" || type === "ASSIGNMENT_REMOVED")
     return "emailAssignments";
-
-  // Ops task events
   if (type === "TASK_ASSIGNED" || type === "TASK_REOPENED")
     return "emailTaskAssigned";
   if (type === "TASK_DUE_SOON") return "emailTaskDueSoon";
-
   return null;
 }
 
@@ -118,7 +105,6 @@ async function getEmailEligibleRecipients(
     },
   });
 
-  // Default: if preference row is missing, treat all flags as true
   return users.filter((u) => {
     const pref = u.notificationPreferences;
     if (!pref) return true;
@@ -130,26 +116,52 @@ function buildEmailHtml(args: {
   title: string;
   body?: string | null;
   href?: string | null;
+  projectTitle?: string | null;
+  actorName?: string | null;
 }) {
-  const safeBody = args.body
-    ? args.body.replace(/</g, "&lt;").replace(/>/g, "&gt;")
-    : "";
   const appUrl = (process.env.APP_URL || "").replace(/\/$/, "");
   const fullHref = args.href
     ? args.href.startsWith("/")
       ? `${appUrl}${args.href}`
       : args.href
     : null;
-  const link = fullHref
-    ? `<p><a href="${fullHref}">Open in WREDD</a></p>`
+
+  const esc = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  const projectBlock = args.projectTitle
+    ? `<div style="margin:0 0 16px;padding:12px 16px;background:#f5f5f5;border-radius:8px;border-left:4px solid #8F4043;">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:#999;margin-bottom:4px;">Project</div>
+        <div style="font-size:15px;font-weight:700;color:#1B1B1B;">${esc(args.projectTitle)}</div>
+      </div>`
     : "";
+
+  const actorBlock = args.actorName
+    ? `<p style="margin:0 0 12px;font-size:13px;color:#555;">By: <strong style="color:#1B1B1B;">${esc(args.actorName)}</strong></p>`
+    : "";
+
+  const bodyBlock = args.body
+    ? `<p style="margin:0 0 16px;font-size:14px;color:#333;white-space:pre-wrap;">${esc(args.body)}</p>`
+    : "";
+
+  const ctaBlock = fullHref
+    ? `<p style="margin:0;">
+        <a href="${fullHref}" style="display:inline-block;padding:10px 22px;border-radius:8px;text-decoration:none;background:#8F4043;color:#fff;font-weight:700;font-size:14px;">
+          Open Project &rarr;
+        </a>
+      </p>`
+    : "";
+
   return `
-    <div style="font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto;">
-      <h2 style="margin:0 0 8px 0;">${args.title}</h2>
-      ${safeBody ? `<p style="margin:0 0 12px 0; white-space:pre-wrap;">${safeBody}</p>` : ""}
-      ${link}
-      <hr style="margin:16px 0; opacity:.2;" />
-      <p style="margin:0; font-size:12px; opacity:.7;">WREDD Dashboard</p>
+    <div style="font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;">
+      <div style="margin-bottom:8px;font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:#8F4043;font-weight:700;">WREDD Dashboard</div>
+      <h2 style="margin:0 0 20px;font-size:20px;font-weight:700;color:#1B1B1B;line-height:1.3;">${esc(args.title)}</h2>
+      ${projectBlock}
+      ${actorBlock}
+      ${bodyBlock}
+      ${ctaBlock}
+      <hr style="margin:28px 0 16px;border:none;border-top:1px solid #eee;" />
+      <p style="margin:0;font-size:11px;color:#aaa;line-height:1.5;">WREDD Internal Dashboard &bull; You received this because you are assigned to or watching this project.</p>
     </div>
   `;
 }
@@ -183,7 +195,6 @@ export async function notify(args: NotifyArgs) {
   }
 
   if (args.recipients.kind === "SPECIFIC_USERS") {
-    // Filter out empty strings, then exclude actor
     recipientIds = exclude(
       args.recipients.userIds.filter(Boolean),
       args.actorId
@@ -220,22 +231,54 @@ export async function notify(args: NotifyArgs) {
   const gate = emailGateForType(args.type);
   if (!gate) return;
 
-  // Only send emails for project-assignee events or direct targeting
+  // ✅ Fixed: PROJECT_AUDIENCE now sends emails too.
+  // Previously only PROJECT_ASSIGNEES_ACTIVE and SPECIFIC_USERS sent emails,
+  // which meant watchers (admins/managers watching a project) never got emails.
   const kind = args.recipients.kind;
-  if (kind !== "PROJECT_ASSIGNEES_ACTIVE" && kind !== "SPECIFIC_USERS") return;
+  if (
+    kind !== "PROJECT_ASSIGNEES_ACTIVE" &&
+    kind !== "SPECIFIC_USERS" &&
+    kind !== "PROJECT_AUDIENCE"
+  ) {
+    return;
+  }
 
   const eligible = await getEmailEligibleRecipients(
     created.map((c) => c.userId),
     args.type
   );
-
   if (!eligible.length) return;
 
-  const subject = args.title;
+  // ── 4. Fetch rich context for email ──────────────────────────────────────
+
+  let projectTitle: string | null = null;
+  if (args.projectId) {
+    const proj = await prisma.project.findUnique({
+      where: { id: args.projectId },
+      select: { title: true },
+    });
+    projectTitle = proj?.title ?? null;
+  }
+
+  let actorName: string | null = null;
+  if (args.actorId) {
+    const actor = await prisma.user.findUnique({
+      where: { id: args.actorId },
+      select: { fullName: true },
+    });
+    actorName = actor?.fullName ?? null;
+  }
+
+  const subject = projectTitle
+    ? `${args.title} — ${projectTitle}`
+    : args.title;
+
   const html = buildEmailHtml({
     title: args.title,
     body: args.body,
     href: args.href,
+    projectTitle,
+    actorName,
   });
 
   await prisma.notificationDelivery.createMany({
@@ -264,10 +307,7 @@ export async function sendPendingEmailDeliveries(limit = 25) {
     try {
       await prisma.notificationDelivery.update({
         where: { id: d.id },
-        data: {
-          attempts: d.attempts + 1,
-          lastAttemptAt: new Date(),
-        },
+        data: { attempts: d.attempts + 1, lastAttemptAt: new Date() },
       });
 
       await sendEmail({ to: d.toEmail, subject: d.subject, html: d.html });

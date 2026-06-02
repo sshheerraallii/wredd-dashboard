@@ -1,0 +1,2954 @@
+From d7213f4ddafc388cf61256af7dc5cbf7c5f77816 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Tue, 2 Jun 2026 11:05:10 +0000
+Subject: [PATCH] feat: unread indicators, delivery notification, email fixes
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- notify.ts: fix email gate for PROJECT_AUDIENCE (watchers now get emails)
+- notify.ts: rich email template with project title, actor name, CTA button
+- delivery.ts: add notify() call after deliver — was completely missing
+- schema.prisma: add ProjectLastSeen model + relations
+- lib/actions/mark-seen.ts: new server action for marking projects seen
+- projects/[id]/page.tsx: auto-mark project as seen on open
+- projects/page.tsx: unread dot + tab counts + mark-as-read button
+- worker/page.tsx: unread dot + tab counts + mark-as-read button
+---
+ .../app/projects/[id]/actions/delivery.ts     | 304 +++---
+ app/(protected)/app/projects/[id]/page.tsx    |   4 +
+ app/(protected)/app/projects/page.tsx         | 962 ++++++++++--------
+ app/(protected)/app/worker/page.tsx           | 885 ++++++++--------
+ lib/actions/mark-seen.ts                      |  48 +
+ lib/notify.ts                                 | 624 ++++++------
+ prisma/schema.prisma                          |  25 +
+ 7 files changed, 1564 insertions(+), 1288 deletions(-)
+ create mode 100644 lib/actions/mark-seen.ts
+
+diff --git a/app/(protected)/app/projects/[id]/actions/delivery.ts b/app/(protected)/app/projects/[id]/actions/delivery.ts
+index 68c3c1b..6dc6278 100644
+--- a/app/(protected)/app/projects/[id]/actions/delivery.ts
++++ b/app/(protected)/app/projects/[id]/actions/delivery.ts
+@@ -1,149 +1,155 @@
+-"use server";
+-
+-import { z } from "zod";
+-import { redirect } from "next/navigation";
+-import { getPrisma } from "@/lib/prisma";
+-import { readSession } from "@/lib/auth";
+-import { revalidatePath } from "next/cache";
+-
+-const prisma = getPrisma();
+-
+-type Role =
+-  | "SUPER_ADMIN"
+-  | "MANAGER"
+-  | "BUSINESS_DEVELOPER"
+-  | "REMOTE_WORKER"
+-  | "ONSITE_EMPLOYEE";
+-
+-function isWorker(role: Role | undefined) {
+-  return role === "REMOTE_WORKER" || role === "ONSITE_EMPLOYEE";
+-}
+-
+-function backWithError(projectId: string, msg: string) {
+-  redirect(`/app/projects/${projectId}?err=${encodeURIComponent(msg)}`);
+-}
+-
+-const DeliverySchema = z.object({
+-  projectId: z.string().min(1),
+-  driveUrl: z
+-    .string()
+-    .trim()
+-    .min(10, "Google Drive link is required")
+-    .refine((v) => {
+-      try {
+-        const u = new URL(v);
+-        const host = u.hostname.toLowerCase();
+-        // allow drive.google.com and docs.google.com
+-        if (host !== "drive.google.com" && host !== "docs.google.com") return false;
+-        return u.protocol === "https:";
+-      } catch {
+-        return false;
+-      }
+-    }, "Must be a valid Google Drive/Docs https link"),
+-  note: z.string().trim().min(3, "Delivery notes are required").max(5000, "Too long"),
+-});
+-
+-function secondsBetween(later: Date, earlier: Date) {
+-  const ms = later.getTime() - earlier.getTime();
+-  return ms > 0 ? Math.floor(ms / 1000) : 0;
+-}
+-
+-export async function deliverProject(formData: FormData) {
+-  const parsed = DeliverySchema.safeParse({
+-    projectId: formData.get("projectId"),
+-    driveUrl: formData.get("driveUrl"),
+-    note: formData.get("note"),
+-  });
+-
+-  if (!parsed.success) {
+-    const projectId = String(formData.get("projectId") || "");
+-    backWithError(projectId, parsed.error.issues[0]?.message ?? "Invalid input");
+-  }
+-
+-  const { projectId, driveUrl, note } = parsed.data;
+-
+-  const session = await readSession();
+-  if (!session?.user) redirect("/login");
+-
+-  const role = session.user.role as Role | undefined;
+-  const userId = session.user.id;
+-
+-  if (!isWorker(role)) backWithError(projectId, "Only workers can deliver projects.");
+-
+-  // Fetch project + verify caller is currently assigned (unassignedAt = null)
+-  const project = await prisma.project.findUnique({
+-    where: { id: projectId },
+-    select: {
+-      id: true,
+-      status: true,
+-      timerRunning: true,
+-      timerLastResumedAt: true,
+-      timerAccumulatedSeconds: true,
+-      assignments: {
+-        where: { unassignedAt: null },
+-        select: { id: true, userId: true },
+-      },
+-    },
+-  });
+-
+-  if (!project) backWithError(projectId, "Project not found.");
+-
+-  const isAssigned = project.assignments.some((a) => a.userId === userId);
+-  if (!isAssigned) backWithError(projectId, "You are not assigned to this project.");
+-
+-  const now = new Date();
+-
+-  await prisma.$transaction(async (tx) => {
+-    // 1) Log DELIVERY message (use schema fields properly)
+-    await tx.projectMessage.create({
+-      data: {
+-        projectId,
+-        type: "DELIVERY",
+-        createdById: userId,
+-        linkUrl: driveUrl,
+-        content: note,
+-        // meta is optional; keep empty unless you want structured data later
+-        // meta: { driveUrl },
+-      },
+-    });
+-
+-    // 2) Pause timer if running (DELIVERED should pause)
+-    let timerAccumulatedSeconds = project.timerAccumulatedSeconds ?? 0;
+-    let timerRunning = project.timerRunning ?? false;
+-    let timerLastResumedAt = project.timerLastResumedAt;
+-
+-    if (timerRunning && timerLastResumedAt) {
+-      timerAccumulatedSeconds += secondsBetween(now, timerLastResumedAt);
+-      timerRunning = false;
+-      timerLastResumedAt = null;
+-    }
+-
+-  // 3) Update status to DELIVERED
+-    await tx.project.update({
+-      where: { id: projectId },
+-      data: {
+-        status: "DELIVERED",
+-        statusChangedAt: now,
+-        timerRunning,
+-        timerLastResumedAt,
+-        timerAccumulatedSeconds,
+-      },
+-    });
+-
+-    // 4) Optional: activity log (you have ProjectActivity)
+-    await tx.projectActivity.create({
+-      data: {
+-        projectId,
+-        actorId: userId,
+-        action: "DELIVERED",
+-        data: {
+-          driveUrl,
+-          noteLength: note.length,
+-        },
+-      },
+-    });
+-  });
+-
+-  revalidatePath(`/app/projects/${projectId}`);
+-  redirect(`/app/projects/${projectId}?ok=${encodeURIComponent("Delivered with Drive link + notes")}`);
+-}
++"use server";
++
++import { z } from "zod";
++import { redirect } from "next/navigation";
++import { getPrisma } from "@/lib/prisma";
++import { readSession } from "@/lib/auth";
++import { revalidatePath } from "next/cache";
++import { notify } from "@/lib/notify";
++
++const prisma = getPrisma();
++
++type Role =
++  | "SUPER_ADMIN"
++  | "MANAGER"
++  | "BUSINESS_DEVELOPER"
++  | "REMOTE_WORKER"
++  | "ONSITE_EMPLOYEE";
++
++function isWorker(role: Role | undefined) {
++  return role === "REMOTE_WORKER" || role === "ONSITE_EMPLOYEE";
++}
++
++function backWithError(projectId: string, msg: string) {
++  redirect(`/app/projects/${projectId}?err=${encodeURIComponent(msg)}`);
++}
++
++const DeliverySchema = z.object({
++  projectId: z.string().min(1),
++  driveUrl: z
++    .string()
++    .trim()
++    .min(10, "Google Drive link is required")
++    .refine((v) => {
++      try {
++        const u = new URL(v);
++        const host = u.hostname.toLowerCase();
++        if (host !== "drive.google.com" && host !== "docs.google.com") return false;
++        return u.protocol === "https:";
++      } catch {
++        return false;
++      }
++    }, "Must be a valid Google Drive/Docs https link"),
++  note: z.string().trim().min(3, "Delivery notes are required").max(5000, "Too long"),
++});
++
++function secondsBetween(later: Date, earlier: Date) {
++  const ms = later.getTime() - earlier.getTime();
++  return ms > 0 ? Math.floor(ms / 1000) : 0;
++}
++
++export async function deliverProject(formData: FormData) {
++  const parsed = DeliverySchema.safeParse({
++    projectId: formData.get("projectId"),
++    driveUrl: formData.get("driveUrl"),
++    note: formData.get("note"),
++  });
++
++  if (!parsed.success) {
++    const projectId = String(formData.get("projectId") || "");
++    backWithError(projectId, parsed.error.issues[0]?.message ?? "Invalid input");
++  }
++
++  const { projectId, driveUrl, note } = parsed.data;
++
++  const session = await readSession();
++  if (!session?.user) redirect("/login");
++
++  const role = session.user.role as Role | undefined;
++  const userId = session.user.id;
++
++  if (!isWorker(role)) backWithError(projectId, "Only workers can deliver projects.");
++
++  const project = await prisma.project.findUnique({
++    where: { id: projectId },
++    select: {
++      id: true,
++      title: true, // ✅ needed for notification
++      status: true,
++      timerRunning: true,
++      timerLastResumedAt: true,
++      timerAccumulatedSeconds: true,
++      assignments: {
++        where: { unassignedAt: null },
++        select: { id: true, userId: true },
++      },
++    },
++  });
++
++  if (!project) backWithError(projectId, "Project not found.");
++
++  const isAssigned = project.assignments.some((a) => a.userId === userId);
++  if (!isAssigned) backWithError(projectId, "You are not assigned to this project.");
++
++  const now = new Date();
++
++  await prisma.$transaction(async (tx) => {
++    // 1) Log DELIVERY message
++    await tx.projectMessage.create({
++      data: {
++        projectId,
++        type: "DELIVERY",
++        createdById: userId,
++        linkUrl: driveUrl,
++        content: note,
++      },
++    });
++
++    // 2) Pause timer if running
++    let timerAccumulatedSeconds = project.timerAccumulatedSeconds ?? 0;
++    let timerRunning = project.timerRunning ?? false;
++    let timerLastResumedAt = project.timerLastResumedAt;
++
++    if (timerRunning && timerLastResumedAt) {
++      timerAccumulatedSeconds += secondsBetween(now, timerLastResumedAt);
++      timerRunning = false;
++      timerLastResumedAt = null;
++    }
++
++    // 3) Update status to DELIVERED
++    await tx.project.update({
++      where: { id: projectId },
++      data: {
++        status: "DELIVERED",
++        statusChangedAt: now,
++        timerRunning,
++        timerLastResumedAt,
++        timerAccumulatedSeconds,
++      },
++    });
++
++    // 4) Activity log
++    await tx.projectActivity.create({
++      data: {
++        projectId,
++        actorId: userId,
++        action: "DELIVERED",
++        data: { driveUrl, noteLength: note.length },
++      },
++    });
++  });
++
++  // ✅ Notify watchers + other assignees (actor excluded automatically)
++  await notify({
++    type: "PROJECT_STATUS_CHANGED",
++    projectId,
++    actorId: userId,
++    title: `Project Delivered: ${project.title}`,
++    body: `The project has been marked as delivered. Review the Google Drive link and delivery notes in the project chat.`,
++    href: `/app/projects/${projectId}`,
++    recipients: { kind: "PROJECT_AUDIENCE" },
++  });
++
++  revalidatePath(`/app/projects/${projectId}`);
++  redirect(`/app/projects/${projectId}?ok=${encodeURIComponent("Delivered with Drive link + notes")}`);
++}
+diff --git a/app/(protected)/app/projects/[id]/page.tsx b/app/(protected)/app/projects/[id]/page.tsx
+index fd7f6e6..65ec6d1 100644
+--- a/app/(protected)/app/projects/[id]/page.tsx
++++ b/app/(protected)/app/projects/[id]/page.tsx
+@@ -13,6 +13,7 @@ import { RatingCard } from "./_components/rating-card";
+ import { OnsiteFinalizeCard } from "./_components/onsite-finalize-card";
+ import { WatchToggle } from "./_components/watch-toggle";
+ import { DeliverDialog } from "./_components/deliver-dialog";
++import { markSeenForUser } from "@/lib/actions/mark-seen";
+ 
+ const prisma = getPrisma();
+ 
+@@ -141,6 +142,9 @@ export default async function ProjectPage({ params }: { params: { id: string } }
+ 
+   const isWatched = !!watcherRow;
+ 
++  // ✅ Auto-mark this project as seen when user opens the page
++  await markSeenForUser(userId, base.id);
++
+   // 3) Now fetch full project details (safe)
+   const project = await prisma.project.findUnique({
+     where: { id: base.id },
+diff --git a/app/(protected)/app/projects/page.tsx b/app/(protected)/app/projects/page.tsx
+index 15275ae..d868b1f 100644
+--- a/app/(protected)/app/projects/page.tsx
++++ b/app/(protected)/app/projects/page.tsx
+@@ -1,450 +1,512 @@
+-// app/(protected)/app/projects/page.tsx
+-
+-import Link from "next/link";
+-import { redirect } from "next/navigation";
+-import { readSession } from "@/lib/auth";
+-import { getPrisma } from "@/lib/prisma";
+-import { Button } from "@/components/ui/button";
+-import { AnnouncementBanner } from "@/components/app/announcement-banner";
+-import { AnnouncementBannerDismissable } from "@/components/app/announcement-banner-dismissable";
+-
+-const prisma = getPrisma();
+-
+-const ALLOWED_ROLES = new Set(["SUPER_ADMIN", "MANAGER", "BUSINESS_DEVELOPER"]);
+-
+-type Tab = "unassigned" | "active" | "delivered" | "completed" | "cancelled";
+-type Scope = "all" | "mine";
+-
+-function parseTab(input: string | undefined): Tab {
+-  const t = (input || "").toLowerCase();
+-  if (t === "unassigned") return "unassigned";
+-  if (t === "active") return "active";
+-  if (t === "delivered") return "delivered";
+-  if (t === "completed") return "completed";
+-  if (t === "cancelled") return "cancelled";
+-  return "active";
+-}
+-
+-function parseScope(input: string | undefined, role: string): Scope {
+-  const s = (input || "").toLowerCase();
+-  const defaultScope: Scope = role === "BUSINESS_DEVELOPER" ? "mine" : "all";
+-  if (s === "all") return "all";
+-  if (s === "mine") return "mine";
+-  return defaultScope;
+-}
+-
+-function parsePage(input: string | undefined) {
+-  const n = Number(input || "1");
+-  if (!Number.isFinite(n) || n < 1) return 1;
+-  return Math.floor(n);
+-}
+-
+-function buildStatusWhere(tab: Tab) {
+-  if (tab === "unassigned") return { status: "UNASSIGNED" as const };
+-  if (tab === "active") return { status: { in: ["IN_PROGRESS", "REVISION"] as const } };
+-  if (tab === "delivered") return { status: "DELIVERED" as const };
+-  if (tab === "completed") return { status: "COMPLETED" as const };
+-  return { status: "CANCELLED" as const };
+-}
+-
+-function TabsRow({ tab, scope, q }: { tab: Tab; scope: Scope; q: string }) {
+-  const items: { key: Tab; label: string }[] = [
+-    { key: "unassigned", label: "Unassigned" },
+-    { key: "active", label: "Active" },
+-    { key: "delivered", label: "Delivered" },
+-    { key: "completed", label: "Completed" },
+-    { key: "cancelled", label: "Cancelled" },
+-  ];
+-
+-  const qp = (nextTab: Tab) => {
+-    const params = new URLSearchParams();
+-    params.set("tab", nextTab);
+-    params.set("scope", scope);
+-    if (q) params.set("q", q);
+-    params.set("page", "1");
+-    return `/app/projects?${params.toString()}`;
+-  };
+-
+-  return (
+-    <div className="flex flex-wrap gap-2">
+-      {items.map((it) => {
+-        const active = tab === it.key;
+-        return (
+-          <Link
+-            key={it.key}
+-            href={qp(it.key)}
+-            className={[
+-              "rounded-full px-4 py-2 text-sm border transition",
+-              active
+-                ? "bg-muted text-foreground border-muted-foreground/30"
+-                : "bg-card text-muted-foreground hover:text-foreground hover:bg-muted/20",
+-            ].join(" ")}
+-          >
+-            {it.label}
+-          </Link>
+-        );
+-      })}
+-    </div>
+-  );
+-}
+-
+-function ScopeRow({
+-  scope,
+-  tab,
+-  q,
+-  role,
+-}: {
+-  scope: Scope;
+-  tab: Tab;
+-  q: string;
+-  role: string;
+-}) {
+-  const items: { key: Scope; label: string }[] =
+-    role === "BUSINESS_DEVELOPER"
+-      ? [
+-          { key: "mine", label: "My Projects" }, // bdOwnerId = me
+-          { key: "all", label: "All Projects" },
+-        ]
+-      : [
+-          { key: "all", label: "All Projects" },
+-          { key: "mine", label: "Created by me" }, // createdById = me
+-        ];
+-
+-  const qp = (nextScope: Scope) => {
+-    const params = new URLSearchParams();
+-    params.set("tab", tab);
+-    params.set("scope", nextScope);
+-    if (q) params.set("q", q);
+-    params.set("page", "1");
+-    return `/app/projects?${params.toString()}`;
+-  };
+-
+-  return (
+-    <div className="flex flex-wrap gap-2">
+-      {items.map((it) => {
+-        const active = scope === it.key;
+-        return (
+-          <Link
+-            key={it.key}
+-            href={qp(it.key)}
+-            className={[
+-              "rounded-full px-4 py-2 text-sm border transition",
+-              active
+-                ? "bg-muted text-foreground border-muted-foreground/30"
+-                : "bg-card text-muted-foreground hover:text-foreground hover:bg-muted/20",
+-            ].join(" ")}
+-          >
+-            {it.label}
+-          </Link>
+-        );
+-      })}
+-    </div>
+-  );
+-}
+-
+-function Pagination({
+-  tab,
+-  scope,
+-  q,
+-  page,
+-  total,
+-  pageSize,
+-}: {
+-  tab: Tab;
+-  scope: Scope;
+-  q: string;
+-  page: number;
+-  total: number;
+-  pageSize: number;
+-}) {
+-  const hasPrev = page > 1;
+-  const hasNext = page * pageSize < total;
+-
+-  const build = (p: number) => {
+-    const params = new URLSearchParams();
+-    params.set("tab", tab);
+-    params.set("scope", scope);
+-    if (q) params.set("q", q);
+-    params.set("page", String(p));
+-    return `/app/projects?${params.toString()}`;
+-  };
+-
+-  const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
+-  const to = Math.min(total, page * pageSize);
+-
+-  return (
+-    <div className="flex items-center justify-between gap-3">
+-      <div className="text-xs text-muted-foreground">
+-        Page {page} • Showing {from}-{to} of {total}
+-      </div>
+-
+-      <div className="flex gap-2">
+-        {hasPrev ? (
+-          <Button asChild variant="secondary">
+-            <Link href={build(page - 1)}>Prev</Link>
+-          </Button>
+-        ) : (
+-          <Button variant="secondary" disabled>
+-            Prev
+-          </Button>
+-        )}
+-
+-        {hasNext ? (
+-          <Button asChild variant="secondary">
+-            <Link href={build(page + 1)}>Next</Link>
+-          </Button>
+-        ) : (
+-          <Button variant="secondary" disabled>
+-            Next
+-          </Button>
+-        )}
+-      </div>
+-    </div>
+-  );
+-}
+-
+-function looksLikeCuid(s: string) {
+-  return /^c[a-z0-9]{10,}$/i.test(s);
+-}
+-
+-// USD formatter (no symbol). Decimal-safe.
+-function fmtUSD(v: any) {
+-  if (v == null) return "—";
+-
+-  const n =
+-    typeof v === "object" && typeof v.toString === "function"
+-      ? Number.parseFloat(v.toString())
+-      : typeof v === "number"
+-        ? v
+-        : typeof v === "string"
+-          ? Number.parseFloat(v)
+-          : NaN;
+-
+-  if (!Number.isFinite(n)) return "—";
+-
+-  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(n);
+-}
+-
+-function dueInHM(p: {
+-  deadlineHours: number;
+-  timerRunning: boolean;
+-  timerLastResumedAt: Date | null;
+-  timerAccumulatedSeconds: number;
+-}) {
+-  const totalSeconds = Math.max(0, Math.floor((p.deadlineHours || 0) * 3600));
+-
+-  const base = p.timerAccumulatedSeconds || 0;
+-  const liveAdd =
+-    p.timerRunning && p.timerLastResumedAt
+-      ? Math.max(0, Math.floor((Date.now() - p.timerLastResumedAt.getTime()) / 1000))
+-      : 0;
+-
+-  const used = base + liveAdd;
+-  const remaining = totalSeconds - used;
+-
+-  const abs = Math.abs(remaining);
+-  const h = Math.floor(abs / 3600);
+-  const m = Math.floor((abs % 3600) / 60);
+-
+-  if (remaining < 0) return `Overdue ${h}h ${m}m`;
+-  return `${h}h ${m}m`;
+-}
+-
+-export default async function ProjectsPage({
+-  searchParams,
+-}: {
+-  searchParams: { tab?: string; scope?: string; q?: string; page?: string };
+-}) {
+-  const session = await readSession();
+-  if (!session?.user) redirect("/login");
+-
+-  const role = session.user.role as string;
+-  const userId = session.user.id as string;
+-
+-  if (!ALLOWED_ROLES.has(role)) redirect("/app");
+-
+-  const tab = parseTab(searchParams?.tab);
+-  const scope = parseScope(searchParams?.scope, role);
+-  const q = (searchParams?.q || "").trim();
+-  const page = parsePage(searchParams?.page);
+-
+-  const PAGE_SIZE = 20;
+-  const skip = (page - 1) * PAGE_SIZE;
+-
+-  const statusWhere = buildStatusWhere(tab);
+-  const where: any = { ...statusWhere };
+-
+-  // Scope semantics:
+-  // - BD: mine => bdOwnerId = me
+-  // - Admin/Manager: mine => createdById = me
+-  if (scope === "mine") {
+-    if (role === "BUSINESS_DEVELOPER") where.bdOwnerId = userId;
+-    else where.createdById = userId;
+-  }
+-
+-  if (q) {
+-    where.OR = [
+-      { title: { contains: q, mode: "insensitive" } },
+-      ...(looksLikeCuid(q) ? [{ id: q }] : []),
+-    ];
+-  }
+-
+-  // Finance visibility:
+-  // This page is only for admin/manager/bd anyway, but keep a clear gate for columns.
+-  const canSeeFinancials = true;
+-  const canEditFinancials =
+-    role === "SUPER_ADMIN" || role === "MANAGER" || role === "BUSINESS_DEVELOPER";
+-
+-  const [total, projects] = await Promise.all([
+-    prisma.project.count({ where }),
+-    prisma.project.findMany({
+-      where,
+-      orderBy: { createdAt: "desc" },
+-      take: PAGE_SIZE,
+-      skip,
+-      select: {
+-        id: true,
+-        title: true,
+-        status: true,
+-
+-        deadlineHours: true,
+-        timerRunning: true,
+-        timerLastResumedAt: true,
+-        timerAccumulatedSeconds: true,
+-
+-        createdAt: true,
+-        department: { select: { name: true } },
+-        createdBy: { select: { fullName: true } },
+-
+-        bdOwner: { select: { fullName: true } },
+-
+-        // ✅ Step 3 finance data (separate model)
+-        finance: {
+-          select: {
+-            workType: true,
+-            portal: true,
+-            priceUsd: true,
+-            platformFeePercent: true,
+-          },
+-        },
+-      },
+-    }),
+-  ]);
+-
+-  return (
+-    <div className="p-6 space-y-6">
+-      <AnnouncementBannerDismissable storageKey="wredd:announce:projects">
+-        <AnnouncementBanner />
+-      </AnnouncementBannerDismissable>
+-
+-      <div className="flex items-start justify-between gap-4">
+-        <div>
+-          <h1 className="text-xl font-semibold">Projects</h1>
+-          <p className="mt-1 text-sm text-muted-foreground">
+-            Filter by status, scope, and search. Finance fields come from ProjectFinance.
+-          </p>
+-        </div>
+-
+-        <Button asChild>
+-          <Link href="/app/projects/new">Create Project</Link>
+-        </Button>
+-      </div>
+-
+-      <div className="space-y-3">
+-        <TabsRow tab={tab} scope={scope} q={q} />
+-        <ScopeRow tab={tab} scope={scope} q={q} role={role} />
+-      </div>
+-
+-      <form className="flex flex-col gap-2 sm:flex-row sm:items-center" action="/app/projects" method="get">
+-        <input type="hidden" name="tab" value={tab} />
+-        <input type="hidden" name="scope" value={scope} />
+-        <input type="hidden" name="page" value="1" />
+-
+-        <input
+-          name="q"
+-          defaultValue={q}
+-          placeholder="Search by title (or paste project id)…"
+-          className="w-full rounded-lg border bg-card px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-muted-foreground/30"
+-        />
+-
+-        <Button type="submit" variant="secondary">
+-          Search
+-        </Button>
+-
+-        {q ? (
+-          <Button asChild variant="ghost">
+-            <Link href={`/app/projects?tab=${tab}&scope=${scope}&page=1`}>Clear</Link>
+-          </Button>
+-        ) : null}
+-      </form>
+-
+-      <Pagination tab={tab} scope={scope} q={q} page={page} total={total} pageSize={PAGE_SIZE} />
+-
+-      <div className="rounded-lg border overflow-hidden">
+-        <div className="grid grid-cols-12 gap-3 border-b bg-card px-4 py-3 text-xs font-medium text-muted-foreground">
+-          <div className="col-span-4">Title</div>
+-          <div className="col-span-2">Finance</div>
+-          <div className="col-span-2">Due in</div>
+-          <div className="col-span-2">Status</div>
+-          <div className="col-span-2 text-right">Action</div>
+-        </div>
+-
+-        {projects.length === 0 ? (
+-          <div className="p-6 text-sm text-muted-foreground">No projects found.</div>
+-        ) : (
+-          <div className="divide-y">
+-            {projects.map((p: any) => {
+-              const finance = p.finance ?? null;
+-
+-              const financeLabel = !canSeeFinancials
+-                ? "—"
+-                : finance
+-                  ? [
+-                      finance.workType ?? "—",
+-                      finance.portal ?? "—",
+-                      finance.priceUsd != null ? `USD ${fmtUSD(finance.priceUsd)}` : "USD —",
+-                    ].join(" • ")
+-                  : "Missing finance";
+-
+-              return (
+-                <div
+-                  key={p.id}
+-                  className="grid grid-cols-12 gap-3 px-4 py-3 hover:bg-muted/30 transition-colors"
+-                >
+-                  <div className="col-span-4 min-w-0">
+-                    <div className="text-sm font-medium truncate">{p.title}</div>
+-                    <div className="text-xs text-muted-foreground truncate">
+-                      {p.createdBy.fullName} • {p.department.name}
+-                      {p.bdOwner?.fullName ? ` • BD: ${p.bdOwner.fullName}` : ""}
+-                    </div>
+-                  </div>
+-
+-                  <div className="col-span-2">
+-                    <div className="text-sm">{financeLabel}</div>
+-                    {canEditFinancials && finance?.platformFeePercent != null ? (
+-                      <div className="text-xs text-muted-foreground">
+-                        Fee: USD {fmtUSD(finance.platformFeePercent)}
+-                      </div>
+-                    ) : null}
+-                  </div>
+-
+-                  <div className="col-span-2 text-sm">{dueInHM(p)}</div>
+-
+-                  <div className="col-span-2 text-sm">{p.status}</div>
+-
+-                  <div className="col-span-2 flex justify-end">
+-                    <Button asChild size="sm" variant="secondary">
+-                      <Link href={`/app/projects/${p.id}`}>View project page</Link>
+-                    </Button>
+-                  </div>
+-                </div>
+-              );
+-            })}
+-          </div>
+-        )}
+-      </div>
+-
+-      <Pagination tab={tab} scope={scope} q={q} page={page} total={total} pageSize={PAGE_SIZE} />
+-    </div>
+-  );
+-}
+\ No newline at end of file
++// app/(protected)/app/projects/page.tsx
++
++import Link from "next/link";
++import { redirect } from "next/navigation";
++import { readSession } from "@/lib/auth";
++import { getPrisma } from "@/lib/prisma";
++import { Button } from "@/components/ui/button";
++import { AnnouncementBanner } from "@/components/app/announcement-banner";
++import { AnnouncementBannerDismissable } from "@/components/app/announcement-banner-dismissable";
++import { markProjectSeenAction } from "@/lib/actions/mark-seen";
++
++const prisma = getPrisma();
++
++const ALLOWED_ROLES = new Set(["SUPER_ADMIN", "MANAGER", "BUSINESS_DEVELOPER"]);
++
++type Tab = "unassigned" | "active" | "delivered" | "completed" | "cancelled";
++type Scope = "all" | "mine";
++
++function parseTab(input: string | undefined): Tab {
++  const t = (input || "").toLowerCase();
++  if (t === "unassigned") return "unassigned";
++  if (t === "active") return "active";
++  if (t === "delivered") return "delivered";
++  if (t === "completed") return "completed";
++  if (t === "cancelled") return "cancelled";
++  return "active";
++}
++
++function parseScope(input: string | undefined, role: string): Scope {
++  const s = (input || "").toLowerCase();
++  const defaultScope: Scope = role === "BUSINESS_DEVELOPER" ? "mine" : "all";
++  if (s === "all") return "all";
++  if (s === "mine") return "mine";
++  return defaultScope;
++}
++
++function parsePage(input: string | undefined) {
++  const n = Number(input || "1");
++  if (!Number.isFinite(n) || n < 1) return 1;
++  return Math.floor(n);
++}
++
++function buildStatusWhere(tab: Tab) {
++  if (tab === "unassigned") return { status: "UNASSIGNED" as const };
++  if (tab === "active") return { status: { in: ["IN_PROGRESS", "REVISION"] as const } };
++  if (tab === "delivered") return { status: "DELIVERED" as const };
++  if (tab === "completed") return { status: "COMPLETED" as const };
++  return { status: "CANCELLED" as const };
++}
++
++function statusToBucket(status: string): Tab | null {
++  if (status === "UNASSIGNED") return "unassigned";
++  if (status === "IN_PROGRESS" || status === "REVISION") return "active";
++  if (status === "DELIVERED") return "delivered";
++  if (status === "COMPLETED") return "completed";
++  if (status === "CANCELLED") return "cancelled";
++  return null;
++}
++
++function TabsRow({
++  tab,
++  scope,
++  q,
++  unreadCounts,
++}: {
++  tab: Tab;
++  scope: Scope;
++  q: string;
++  unreadCounts: Record<string, number>;
++}) {
++  const items: { key: Tab; label: string }[] = [
++    { key: "unassigned", label: "Unassigned" },
++    { key: "active", label: "Active" },
++    { key: "delivered", label: "Delivered" },
++    { key: "completed", label: "Completed" },
++    { key: "cancelled", label: "Cancelled" },
++  ];
++
++  const qp = (nextTab: Tab) => {
++    const params = new URLSearchParams();
++    params.set("tab", nextTab);
++    params.set("scope", scope);
++    if (q) params.set("q", q);
++    params.set("page", "1");
++    return `/app/projects?${params.toString()}`;
++  };
++
++  return (
++    <div className="flex flex-wrap gap-2">
++      {items.map((it) => {
++        const active = tab === it.key;
++        const count = unreadCounts[it.key] ?? 0;
++        return (
++          <Link
++            key={it.key}
++            href={qp(it.key)}
++            className={[
++              "inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-sm border transition",
++              active
++                ? "bg-muted text-foreground border-muted-foreground/30"
++                : "bg-card text-muted-foreground hover:text-foreground hover:bg-muted/20",
++            ].join(" ")}
++          >
++            {it.label}
++            {count > 0 && (
++              <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold text-primary-foreground leading-none">
++                {count}
++              </span>
++            )}
++          </Link>
++        );
++      })}
++    </div>
++  );
++}
++
++function ScopeRow({
++  scope,
++  tab,
++  q,
++  role,
++}: {
++  scope: Scope;
++  tab: Tab;
++  q: string;
++  role: string;
++}) {
++  const items: { key: Scope; label: string }[] =
++    role === "BUSINESS_DEVELOPER"
++      ? [
++          { key: "mine", label: "My Projects" },
++          { key: "all", label: "All Projects" },
++        ]
++      : [
++          { key: "all", label: "All Projects" },
++          { key: "mine", label: "Created by me" },
++        ];
++
++  const qp = (nextScope: Scope) => {
++    const params = new URLSearchParams();
++    params.set("tab", tab);
++    params.set("scope", nextScope);
++    if (q) params.set("q", q);
++    params.set("page", "1");
++    return `/app/projects?${params.toString()}`;
++  };
++
++  return (
++    <div className="flex flex-wrap gap-2">
++      {items.map((it) => {
++        const active = scope === it.key;
++        return (
++          <Link
++            key={it.key}
++            href={qp(it.key)}
++            className={[
++              "rounded-full px-4 py-2 text-sm border transition",
++              active
++                ? "bg-muted text-foreground border-muted-foreground/30"
++                : "bg-card text-muted-foreground hover:text-foreground hover:bg-muted/20",
++            ].join(" ")}
++          >
++            {it.label}
++          </Link>
++        );
++      })}
++    </div>
++  );
++}
++
++function Pagination({
++  tab,
++  scope,
++  q,
++  page,
++  total,
++  pageSize,
++}: {
++  tab: Tab;
++  scope: Scope;
++  q: string;
++  page: number;
++  total: number;
++  pageSize: number;
++}) {
++  const hasPrev = page > 1;
++  const hasNext = page * pageSize < total;
++
++  const build = (p: number) => {
++    const params = new URLSearchParams();
++    params.set("tab", tab);
++    params.set("scope", scope);
++    if (q) params.set("q", q);
++    params.set("page", String(p));
++    return `/app/projects?${params.toString()}`;
++  };
++
++  const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
++  const to = Math.min(total, page * pageSize);
++
++  return (
++    <div className="flex items-center justify-between gap-3">
++      <div className="text-xs text-muted-foreground">
++        Page {page} • Showing {from}-{to} of {total}
++      </div>
++      <div className="flex gap-2">
++        {hasPrev ? (
++          <Button asChild variant="secondary">
++            <Link href={build(page - 1)}>Prev</Link>
++          </Button>
++        ) : (
++          <Button variant="secondary" disabled>Prev</Button>
++        )}
++        {hasNext ? (
++          <Button asChild variant="secondary">
++            <Link href={build(page + 1)}>Next</Link>
++          </Button>
++        ) : (
++          <Button variant="secondary" disabled>Next</Button>
++        )}
++      </div>
++    </div>
++  );
++}
++
++function looksLikeCuid(s: string) {
++  return /^c[a-z0-9]{10,}$/i.test(s);
++}
++
++function fmtUSD(v: any) {
++  if (v == null) return "—";
++  const n =
++    typeof v === "object" && typeof v.toString === "function"
++      ? Number.parseFloat(v.toString())
++      : typeof v === "number"
++        ? v
++        : typeof v === "string"
++          ? Number.parseFloat(v)
++          : NaN;
++  if (!Number.isFinite(n)) return "—";
++  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(n);
++}
++
++function dueInHM(p: {
++  deadlineHours: number;
++  timerRunning: boolean;
++  timerLastResumedAt: Date | null;
++  timerAccumulatedSeconds: number;
++}) {
++  const totalSeconds = Math.max(0, Math.floor((p.deadlineHours || 0) * 3600));
++  const base = p.timerAccumulatedSeconds || 0;
++  const liveAdd =
++    p.timerRunning && p.timerLastResumedAt
++      ? Math.max(0, Math.floor((Date.now() - p.timerLastResumedAt.getTime()) / 1000))
++      : 0;
++  const used = base + liveAdd;
++  const remaining = totalSeconds - used;
++  const abs = Math.abs(remaining);
++  const h = Math.floor(abs / 3600);
++  const m = Math.floor((abs % 3600) / 60);
++  if (remaining < 0) return `Overdue ${h}h ${m}m`;
++  return `${h}h ${m}m`;
++}
++
++export default async function ProjectsPage({
++  searchParams,
++}: {
++  searchParams: { tab?: string; scope?: string; q?: string; page?: string };
++}) {
++  const session = await readSession();
++  if (!session?.user) redirect("/login");
++
++  const role = session.user.role as string;
++  const userId = session.user.id as string;
++
++  if (!ALLOWED_ROLES.has(role)) redirect("/app");
++
++  const tab = parseTab(searchParams?.tab);
++  const scope = parseScope(searchParams?.scope, role);
++  const q = (searchParams?.q || "").trim();
++  const page = parsePage(searchParams?.page);
++
++  const PAGE_SIZE = 20;
++  const skip = (page - 1) * PAGE_SIZE;
++
++  // ── Scope base (no status, no search) — for tab counts ───────────────────
++  const scopeBaseWhere: any = {};
++  if (scope === "mine") {
++    if (role === "BUSINESS_DEVELOPER") scopeBaseWhere.bdOwnerId = userId;
++    else scopeBaseWhere.createdById = userId;
++  }
++
++  // ── Full where (status + scope + search) — for current page ──────────────
++  const statusWhere = buildStatusWhere(tab);
++  const where: any = { ...statusWhere, ...scopeBaseWhere };
++
++  if (q) {
++    where.OR = [
++      { title: { contains: q, mode: "insensitive" } },
++      ...(looksLikeCuid(q) ? [{ id: q }] : []),
++    ];
++  }
++
++  const canEditFinancials =
++    role === "SUPER_ADMIN" || role === "MANAGER" || role === "BUSINESS_DEVELOPER";
++
++  // ── Fetch tab unread counts (all statuses, scope only, no search) ─────────
++  const allForCounts = await prisma.project.findMany({
++    where: scopeBaseWhere,
++    select: {
++      status: true,
++      updatedAt: true,
++      messages: {
++        orderBy: { createdAt: "desc" },
++        take: 1,
++        select: { createdAt: true },
++      },
++      lastSeenBy: {
++        where: { userId },
++        select: { seenAt: true },
++        take: 1,
++      },
++    },
++  });
++
++  const unreadCounts: Record<string, number> = {};
++  for (const p of allForCounts) {
++    const latestActivity = p.messages[0]?.createdAt ?? p.updatedAt;
++    const seenAt = p.lastSeenBy[0]?.seenAt;
++    const isUnread = !seenAt || latestActivity > seenAt;
++    if (!isUnread) continue;
++    const bucket = statusToBucket(p.status);
++    if (bucket) unreadCounts[bucket] = (unreadCounts[bucket] ?? 0) + 1;
++  }
++
++  // ── Current page projects ─────────────────────────────────────────────────
++  const [total, projects] = await Promise.all([
++    prisma.project.count({ where }),
++    prisma.project.findMany({
++      where,
++      orderBy: { createdAt: "desc" },
++      take: PAGE_SIZE,
++      skip,
++      select: {
++        id: true,
++        title: true,
++        status: true,
++        deadlineHours: true,
++        timerRunning: true,
++        timerLastResumedAt: true,
++        timerAccumulatedSeconds: true,
++        createdAt: true,
++        updatedAt: true,
++        department: { select: { name: true } },
++        createdBy: { select: { fullName: true } },
++        bdOwner: { select: { fullName: true } },
++        finance: {
++          select: {
++            workType: true,
++            portal: true,
++            priceUsd: true,
++            platformFeePercent: true,
++          },
++        },
++        // ✅ For unread indicator
++        messages: {
++          orderBy: { createdAt: "desc" },
++          take: 1,
++          select: { createdAt: true },
++        },
++        lastSeenBy: {
++          where: { userId },
++          select: { seenAt: true },
++          take: 1,
++        },
++      },
++    }),
++  ]);
++
++  return (
++    <div className="p-6 space-y-6">
++      <AnnouncementBannerDismissable storageKey="wredd:announce:projects">
++        <AnnouncementBanner />
++      </AnnouncementBannerDismissable>
++
++      <div className="flex items-start justify-between gap-4">
++        <div>
++          <h1 className="text-xl font-semibold">Projects</h1>
++          <p className="mt-1 text-sm text-muted-foreground">
++            Filter by status, scope, and search.
++          </p>
++        </div>
++        <Button asChild>
++          <Link href="/app/projects/new">Create Project</Link>
++        </Button>
++      </div>
++
++      <div className="space-y-3">
++        <TabsRow tab={tab} scope={scope} q={q} unreadCounts={unreadCounts} />
++        <ScopeRow tab={tab} scope={scope} q={q} role={role} />
++      </div>
++
++      <form className="flex flex-col gap-2 sm:flex-row sm:items-center" action="/app/projects" method="get">
++        <input type="hidden" name="tab" value={tab} />
++        <input type="hidden" name="scope" value={scope} />
++        <input type="hidden" name="page" value="1" />
++        <input
++          name="q"
++          defaultValue={q}
++          placeholder="Search by title (or paste project id)…"
++          className="w-full rounded-lg border bg-card px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-muted-foreground/30"
++        />
++        <Button type="submit" variant="secondary">Search</Button>
++        {q ? (
++          <Button asChild variant="ghost">
++            <Link href={`/app/projects?tab=${tab}&scope=${scope}&page=1`}>Clear</Link>
++          </Button>
++        ) : null}
++      </form>
++
++      <Pagination tab={tab} scope={scope} q={q} page={page} total={total} pageSize={PAGE_SIZE} />
++
++      <div className="rounded-lg border overflow-hidden">
++        <div className="grid grid-cols-12 gap-3 border-b bg-card px-4 py-3 text-xs font-medium text-muted-foreground">
++          <div className="col-span-4">Title</div>
++          <div className="col-span-2">Finance</div>
++          <div className="col-span-2">Due in</div>
++          <div className="col-span-2">Status</div>
++          <div className="col-span-2 text-right">Action</div>
++        </div>
++
++        {projects.length === 0 ? (
++          <div className="p-6 text-sm text-muted-foreground">No projects found.</div>
++        ) : (
++          <div className="divide-y">
++            {projects.map((p: any) => {
++              const finance = p.finance ?? null;
++
++              const financeLabel = finance
++                ? [
++                    finance.workType ?? "—",
++                    finance.portal ?? "—",
++                    finance.priceUsd != null ? `USD ${fmtUSD(finance.priceUsd)}` : "USD —",
++                  ].join(" • ")
++                : "Missing finance";
++
++              // ✅ Unread indicator
++              const latestActivity = p.messages[0]?.createdAt ?? p.updatedAt;
++              const seenAt = p.lastSeenBy[0]?.seenAt;
++              const isUnread = !seenAt || latestActivity > seenAt;
++
++              return (
++                <div
++                  key={p.id}
++                  className="grid grid-cols-12 gap-3 px-4 py-3 hover:bg-muted/30 transition-colors"
++                >
++                  <div className="col-span-4 min-w-0">
++                    <div className="flex items-center gap-2">
++                      {isUnread && (
++                        <span
++                          className="h-2 w-2 flex-shrink-0 rounded-full bg-primary"
++                          title="Unread activity"
++                        />
++                      )}
++                      <div className="text-sm font-medium truncate">{p.title}</div>
++                    </div>
++                    <div className="text-xs text-muted-foreground truncate mt-0.5">
++                      {p.createdBy.fullName} • {p.department.name}
++                      {p.bdOwner?.fullName ? ` • BD: ${p.bdOwner.fullName}` : ""}
++                    </div>
++                    {isUnread && (
++                      <form action={markProjectSeenAction} className="mt-1">
++                        <input type="hidden" name="projectId" value={p.id} />
++                        <button
++                          type="submit"
++                          className="text-[11px] text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors"
++                        >
++                          Mark as read
++                        </button>
++                      </form>
++                    )}
++                  </div>
++
++                  <div className="col-span-2">
++                    <div className="text-sm">{financeLabel}</div>
++                    {canEditFinancials && finance?.platformFeePercent != null ? (
++                      <div className="text-xs text-muted-foreground">
++                        Fee: {fmtUSD(finance.platformFeePercent)}%
++                      </div>
++                    ) : null}
++                  </div>
++
++                  <div className="col-span-2 text-sm">{dueInHM(p)}</div>
++
++                  <div className="col-span-2 text-sm">{p.status}</div>
++
++                  <div className="col-span-2 flex justify-end">
++                    <Button asChild size="sm" variant="secondary">
++                      <Link href={`/app/projects/${p.id}`}>View</Link>
++                    </Button>
++                  </div>
++                </div>
++              );
++            })}
++          </div>
++        )}
++      </div>
++
++      <Pagination tab={tab} scope={scope} q={q} page={page} total={total} pageSize={PAGE_SIZE} />
++    </div>
++  );
++}
+diff --git a/app/(protected)/app/worker/page.tsx b/app/(protected)/app/worker/page.tsx
+index 34207f1..80350b7 100644
+--- a/app/(protected)/app/worker/page.tsx
++++ b/app/(protected)/app/worker/page.tsx
+@@ -1,397 +1,488 @@
+-// app/(protected)/app/worker/projects/page.tsx
+-
+-import Link from "next/link";
+-import { redirect } from "next/navigation";
+-import { readSession } from "@/lib/auth";
+-import { getPrisma } from "@/lib/prisma";
+-import { Button } from "@/components/ui/button";
+-import { AnnouncementBanner } from "@/components/app/announcement-banner";
+-import { AnnouncementBannerDismissable } from "@/components/app/announcement-banner-dismissable";
+-
+-const prisma = getPrisma();
+-
+-type Tab = "unassigned" | "active" | "delivered" | "completed" | "cancelled";
+-
+-function parseTab(input: string | undefined): Tab {
+-  const t = (input || "").toLowerCase();
+-  if (t === "unassigned") return "unassigned";
+-  if (t === "active") return "active";
+-  if (t === "delivered") return "delivered";
+-  if (t === "completed") return "completed";
+-  if (t === "cancelled") return "cancelled";
+-  return "active";
+-}
+-
+-function parsePage(input: string | undefined) {
+-  const n = Number(input || "1");
+-  if (!Number.isFinite(n) || n < 1) return 1;
+-  return Math.floor(n);
+-}
+-
+-function TabsRow({ tab, q }: { tab: Tab; q: string }) {
+-  const items: { key: Tab; label: string }[] = [
+-    { key: "unassigned", label: "Unassigned" },
+-    { key: "active", label: "Active" },
+-    { key: "delivered", label: "Delivered" },
+-    { key: "completed", label: "Completed" },
+-    { key: "cancelled", label: "Cancelled" },
+-  ];
+-
+-  const hrefFor = (nextTab: Tab) => {
+-    const params = new URLSearchParams();
+-    params.set("tab", nextTab);
+-    if (q) params.set("q", q);
+-    params.set("page", "1");
+-    return `/app/worker?${params.toString()}`;
+-  };
+-
+-  return (
+-    <div className="flex flex-wrap gap-2">
+-      {items.map((it) => {
+-        const active = tab === it.key;
+-        return (
+-          <Link
+-            key={it.key}
+-            href={hrefFor(it.key)}
+-            className={[
+-              "rounded-full px-4 py-2 text-sm border transition",
+-              active
+-                ? "bg-muted text-foreground border-muted-foreground/30"
+-                : "bg-card text-muted-foreground hover:text-foreground hover:bg-muted/20",
+-            ].join(" ")}
+-          >
+-            {it.label}
+-          </Link>
+-        );
+-      })}
+-    </div>
+-  );
+-}
+-
+-function Pagination({
+-  tab,
+-  q,
+-  page,
+-  total,
+-  pageSize,
+-}: {
+-  tab: Tab;
+-  q: string;
+-  page: number;
+-  total: number;
+-  pageSize: number;
+-}) {
+-  const hasPrev = page > 1;
+-  const hasNext = page * pageSize < total;
+-
+-  const build = (p: number) => {
+-    const params = new URLSearchParams();
+-    params.set("tab", tab);
+-    if (q) params.set("q", q);
+-    params.set("page", String(p));
+-    return `/app/worker/projects?${params.toString()}`;
+-  };
+-
+-  const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
+-  const to = Math.min(total, page * pageSize);
+-
+-  return (
+-    <div className="flex items-center justify-between gap-3">
+-      <div className="text-xs text-muted-foreground">
+-        Page {page} • Showing {from}-{to} of {total}
+-      </div>
+-
+-      <div className="flex gap-2">
+-        {hasPrev ? (
+-          <Button asChild variant="secondary">
+-            <Link href={build(page - 1)}>Prev</Link>
+-          </Button>
+-        ) : (
+-          <Button variant="secondary" disabled>
+-            Prev
+-          </Button>
+-        )}
+-
+-        {hasNext ? (
+-          <Button asChild variant="secondary">
+-            <Link href={build(page + 1)}>Next</Link>
+-          </Button>
+-        ) : (
+-          <Button variant="secondary" disabled>
+-            Next
+-          </Button>
+-        )}
+-      </div>
+-    </div>
+-  );
+-}
+-
+-function fmtPKR(v: any) {
+-  if (v == null) return "—";
+-  const n =
+-    typeof v === "object" && typeof v.toString === "function"
+-      ? Number.parseFloat(v.toString())
+-      : typeof v === "number"
+-        ? v
+-        : typeof v === "string"
+-          ? Number.parseFloat(v)
+-          : NaN;
+-  if (!Number.isFinite(n)) return "—";
+-  return new Intl.NumberFormat("en-PK", { maximumFractionDigits: 2 }).format(n);
+-}
+-
+-function dueInHM(p: {
+-  deadlineHours: number;
+-  timerRunning: boolean;
+-  timerLastResumedAt: Date | null;
+-  timerAccumulatedSeconds: number;
+-}) {
+-  const totalSeconds = Math.max(0, Math.floor((p.deadlineHours || 0) * 3600));
+-  const base = p.timerAccumulatedSeconds || 0;
+-  const liveAdd =
+-    p.timerRunning && p.timerLastResumedAt
+-      ? Math.max(0, Math.floor((Date.now() - p.timerLastResumedAt.getTime()) / 1000))
+-      : 0;
+-  const used = base + liveAdd;
+-  const remaining = totalSeconds - used;
+-  const abs = Math.abs(remaining);
+-  const h = Math.floor(abs / 3600);
+-  const m = Math.floor((abs % 3600) / 60);
+-  if (remaining < 0) return `Overdue ${h}h ${m}m`;
+-  return `${h}h ${m}m`;
+-}
+-
+-export default async function WorkerProjectsPage({
+-  searchParams,
+-}: {
+-  searchParams: { tab?: string; q?: string; page?: string };
+-}) {
+-  const session = await readSession();
+-  if (!session?.user) redirect("/login");
+-
+-  const role = session.user.role;
+-  const userId = session.user.id;
+-
+-  if (role !== "REMOTE_WORKER" && role !== "ONSITE_EMPLOYEE") {
+-    redirect("/app?err=forbidden");
+-  }
+-
+-  const tab = parseTab(searchParams?.tab);
+-  const q = (searchParams?.q || "").trim();
+-  const page = parsePage(searchParams?.page);
+-
+-  const PAGE_SIZE = 50;
+-  const skip = (page - 1) * PAGE_SIZE;
+-
+-  const deptLinks = await prisma.userDepartment.findMany({
+-    where: { userId },
+-    select: { departmentId: true },
+-  });
+-  const deptIds = deptLinks.map((d) => d.departmentId);
+-
+-  const where: any = {};
+-
+-  if (tab === "unassigned") {
+-    where.status = "UNASSIGNED";
+-    where.departmentId = { in: deptIds.length ? deptIds : ["__none__"] };
+-  } else if (tab === "active") {
+-    where.status = { in: ["IN_PROGRESS", "REVISION"] };
+-    where.assignments = { some: { userId, unassignedAt: null } };
+-  } else if (tab === "delivered") {
+-    where.status = "DELIVERED";
+-    where.assignments = { some: { userId, unassignedAt: null } };
+-  } else if (tab === "completed") {
+-    where.status = "COMPLETED";
+-    where.assignments = { some: { userId, unassignedAt: null } };
+-  } else if (tab === "cancelled") {
+-    // Two cases:
+-    // 1. Project was fully cancelled while worker was still assigned
+-    // 2. Worker was individually cancelled-for-worker (outcome=CANCELLED)
+-    //    — project may still be active for others
+-    where.OR = [
+-      {
+-        status: "CANCELLED",
+-        assignments: { some: { userId, unassignedAt: null } },
+-      },
+-      {
+-        assignments: { some: { userId, outcome: "CANCELLED" as any } },
+-      },
+-    ];
+-  }
+-
+-  // Search: when OR is already set, wrap in AND to avoid overriding it
+-  if (q) {
+-    if (where.OR) {
+-      where.AND = [
+-        { OR: where.OR },
+-        { title: { contains: q, mode: "insensitive" } },
+-      ];
+-      delete where.OR;
+-    } else {
+-      where.title = { contains: q, mode: "insensitive" };
+-    }
+-  }
+-
+-  const [total, projects] = await Promise.all([
+-    prisma.project.count({ where }),
+-    prisma.project.findMany({
+-      where,
+-      orderBy: { createdAt: "desc" },
+-      take: PAGE_SIZE,
+-      skip,
+-      select: {
+-        id: true,
+-        title: true,
+-        status: true,
+-
+-        deadlineHours: true,
+-        timerRunning: true,
+-        timerLastResumedAt: true,
+-        timerAccumulatedSeconds: true,
+-
+-        department: { select: { name: true } },
+-
+-        paymentLines: {
+-          where: { userId },
+-          select: { amount: true },
+-          take: 1,
+-        },
+-
+-        // Needed for cancelled tab: detect cancelled-for-worker vs project-cancelled
+-        assignments: {
+-          where: { userId },
+-          select: { outcome: true, unassignedAt: true },
+-          take: 1,
+-        },
+-      },
+-    }),
+-  ]);
+-
+-  return (
+-    <div className="p-6 space-y-4">
+-      <AnnouncementBannerDismissable storageKey="wredd:announce:projects">
+-        <AnnouncementBanner />
+-      </AnnouncementBannerDismissable>
+-
+-      <div>
+-        <h1 className="text-xl font-semibold">Worker Projects</h1>
+-        <p className="mt-1 text-sm text-muted-foreground">
+-          Tabs are status-based. "Active" = IN_PROGRESS + REVISION. Search applies to the current tab.
+-        </p>
+-      </div>
+-
+-      <TabsRow tab={tab} q={q} />
+-
+-      <form
+-        className="flex flex-col gap-2 sm:flex-row sm:items-center"
+-        action="/app/worker"
+-        method="get"
+-      >
+-        <input type="hidden" name="tab" value={tab} />
+-        <input type="hidden" name="page" value="1" />
+-
+-        <input
+-          name="q"
+-          defaultValue={q}
+-          placeholder="Search by title…"
+-          className="w-full rounded-lg border bg-card px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-muted-foreground/30"
+-        />
+-
+-        <Button type="submit" variant="secondary">
+-          Search
+-        </Button>
+-
+-        {q ? (
+-          <Button asChild variant="ghost">
+-            <Link href={`/app/worker?tab=${tab}&page=1`}>Clear</Link>
+-          </Button>
+-        ) : null}
+-      </form>
+-
+-      <Pagination tab={tab} q={q} page={page} total={total} pageSize={PAGE_SIZE} />
+-
+-      <div className="rounded-lg border overflow-hidden">
+-        <div className="grid grid-cols-12 gap-3 border-b bg-card px-4 py-3 text-xs font-medium text-muted-foreground">
+-          <div className="col-span-4">Title</div>
+-          <div className="col-span-2">Price</div>
+-          <div className="col-span-2">Due in</div>
+-          <div className="col-span-2">Status</div>
+-          <div className="col-span-2 text-right">Action</div>
+-        </div>
+-
+-        {projects.length === 0 ? (
+-          <div className="p-6 text-sm text-muted-foreground">
+-            No projects in this tab.
+-          </div>
+-        ) : (
+-          <div className="divide-y">
+-            {projects.map((p: any) => {
+-              const myLine = p.paymentLines?.[0] ?? null;
+-              const myAssignment = p.assignments?.[0] ?? null;
+-
+-              // Determine the display status label
+-              const isCancelledForWorker = myAssignment?.outcome === "CANCELLED";
+-              const statusLabel = isCancelledForWorker
+-                ? "Cancelled (for you)"
+-                : p.status;
+-
+-              // On cancelled tab: no link to project detail page
+-              const isCancelledTab = tab === "cancelled";
+-
+-              return (
+-                <div
+-                  key={p.id}
+-                  className="grid grid-cols-12 gap-3 px-4 py-3 hover:bg-muted/30 transition-colors"
+-                >
+-                  <div className="col-span-4">
+-                    <div className="text-sm font-medium">{p.title}</div>
+-                    <div className="text-xs text-muted-foreground">
+-                      {p.department.name}
+-                    </div>
+-                  </div>
+-
+-                  <div className="col-span-2 text-sm">
+-                    {role === "REMOTE_WORKER"
+-                      ? myLine
+-                        ? fmtPKR(myLine.amount)
+-                        : "—"
+-                      : "—"}
+-                  </div>
+-
+-                  <div className="col-span-2 text-sm">{dueInHM(p)}</div>
+-
+-                  <div className="col-span-2 text-sm">
+-                    <span
+-                      className={
+-                        isCancelledForWorker
+-                          ? "text-red-600 dark:text-red-400"
+-                          : ""
+-                      }
+-                    >
+-                      {statusLabel}
+-                    </span>
+-                  </div>
+-
+-                  <div className="col-span-2 flex justify-end">
+-                    {isCancelledTab ? (
+-                      // No link on cancelled tab — access to project detail is blocked
+-                      <span className="text-xs text-muted-foreground italic">
+-                        No access
+-                      </span>
+-                    ) : (
+-                      <Button asChild size="sm" variant="secondary">
+-                        <Link href={`/app/projects/${p.id}`}>View project page</Link>
+-                      </Button>
+-                    )}
+-                  </div>
+-                </div>
+-              );
+-            })}
+-          </div>
+-        )}
+-      </div>
+-
+-      <Pagination tab={tab} q={q} page={page} total={total} pageSize={PAGE_SIZE} />
+-    </div>
+-  );
+-}
+\ No newline at end of file
++// app/(protected)/app/worker/page.tsx
++
++import Link from "next/link";
++import { redirect } from "next/navigation";
++import { readSession } from "@/lib/auth";
++import { getPrisma } from "@/lib/prisma";
++import { Button } from "@/components/ui/button";
++import { AnnouncementBanner } from "@/components/app/announcement-banner";
++import { AnnouncementBannerDismissable } from "@/components/app/announcement-banner-dismissable";
++import { markProjectSeenAction } from "@/lib/actions/mark-seen";
++
++const prisma = getPrisma();
++
++type Tab = "unassigned" | "active" | "delivered" | "completed" | "cancelled";
++
++function parseTab(input: string | undefined): Tab {
++  const t = (input || "").toLowerCase();
++  if (t === "unassigned") return "unassigned";
++  if (t === "active") return "active";
++  if (t === "delivered") return "delivered";
++  if (t === "completed") return "completed";
++  if (t === "cancelled") return "cancelled";
++  return "active";
++}
++
++function parsePage(input: string | undefined) {
++  const n = Number(input || "1");
++  if (!Number.isFinite(n) || n < 1) return 1;
++  return Math.floor(n);
++}
++
++function TabsRow({
++  tab,
++  q,
++  unreadCounts,
++}: {
++  tab: Tab;
++  q: string;
++  unreadCounts: Record<string, number>;
++}) {
++  const items: { key: Tab; label: string }[] = [
++    { key: "unassigned", label: "Unassigned" },
++    { key: "active", label: "Active" },
++    { key: "delivered", label: "Delivered" },
++    { key: "completed", label: "Completed" },
++    { key: "cancelled", label: "Cancelled" },
++  ];
++
++  const hrefFor = (nextTab: Tab) => {
++    const params = new URLSearchParams();
++    params.set("tab", nextTab);
++    if (q) params.set("q", q);
++    params.set("page", "1");
++    return `/app/worker?${params.toString()}`;
++  };
++
++  return (
++    <div className="flex flex-wrap gap-2">
++      {items.map((it) => {
++        const active = tab === it.key;
++        const count = unreadCounts[it.key] ?? 0;
++        return (
++          <Link
++            key={it.key}
++            href={hrefFor(it.key)}
++            className={[
++              "inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-sm border transition",
++              active
++                ? "bg-muted text-foreground border-muted-foreground/30"
++                : "bg-card text-muted-foreground hover:text-foreground hover:bg-muted/20",
++            ].join(" ")}
++          >
++            {it.label}
++            {count > 0 && (
++              <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold text-primary-foreground leading-none">
++                {count}
++              </span>
++            )}
++          </Link>
++        );
++      })}
++    </div>
++  );
++}
++
++function Pagination({
++  tab,
++  q,
++  page,
++  total,
++  pageSize,
++}: {
++  tab: Tab;
++  q: string;
++  page: number;
++  total: number;
++  pageSize: number;
++}) {
++  const hasPrev = page > 1;
++  const hasNext = page * pageSize < total;
++
++  const build = (p: number) => {
++    const params = new URLSearchParams();
++    params.set("tab", tab);
++    if (q) params.set("q", q);
++    params.set("page", String(p));
++    return `/app/worker?${params.toString()}`;
++  };
++
++  const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
++  const to = Math.min(total, page * pageSize);
++
++  return (
++    <div className="flex items-center justify-between gap-3">
++      <div className="text-xs text-muted-foreground">
++        Page {page} • Showing {from}-{to} of {total}
++      </div>
++      <div className="flex gap-2">
++        {hasPrev ? (
++          <Button asChild variant="secondary">
++            <Link href={build(page - 1)}>Prev</Link>
++          </Button>
++        ) : (
++          <Button variant="secondary" disabled>Prev</Button>
++        )}
++        {hasNext ? (
++          <Button asChild variant="secondary">
++            <Link href={build(page + 1)}>Next</Link>
++          </Button>
++        ) : (
++          <Button variant="secondary" disabled>Next</Button>
++        )}
++      </div>
++    </div>
++  );
++}
++
++function fmtPKR(v: any) {
++  if (v == null) return "—";
++  const n =
++    typeof v === "object" && typeof v.toString === "function"
++      ? Number.parseFloat(v.toString())
++      : typeof v === "number"
++        ? v
++        : typeof v === "string"
++          ? Number.parseFloat(v)
++          : NaN;
++  if (!Number.isFinite(n)) return "—";
++  return new Intl.NumberFormat("en-PK", { maximumFractionDigits: 2 }).format(n);
++}
++
++function dueInHM(p: {
++  deadlineHours: number;
++  timerRunning: boolean;
++  timerLastResumedAt: Date | null;
++  timerAccumulatedSeconds: number;
++}) {
++  const totalSeconds = Math.max(0, Math.floor((p.deadlineHours || 0) * 3600));
++  const base = p.timerAccumulatedSeconds || 0;
++  const liveAdd =
++    p.timerRunning && p.timerLastResumedAt
++      ? Math.max(0, Math.floor((Date.now() - p.timerLastResumedAt.getTime()) / 1000))
++      : 0;
++  const used = base + liveAdd;
++  const remaining = totalSeconds - used;
++  const abs = Math.abs(remaining);
++  const h = Math.floor(abs / 3600);
++  const m = Math.floor((abs % 3600) / 60);
++  if (remaining < 0) return `Overdue ${h}h ${m}m`;
++  return `${h}h ${m}m`;
++}
++
++export default async function WorkerProjectsPage({
++  searchParams,
++}: {
++  searchParams: { tab?: string; q?: string; page?: string };
++}) {
++  const session = await readSession();
++  if (!session?.user) redirect("/login");
++
++  const role = session.user.role;
++  const userId = session.user.id;
++
++  if (role !== "REMOTE_WORKER" && role !== "ONSITE_EMPLOYEE") {
++    redirect("/app?err=forbidden");
++  }
++
++  const tab = parseTab(searchParams?.tab);
++  const q = (searchParams?.q || "").trim();
++  const page = parsePage(searchParams?.page);
++
++  const PAGE_SIZE = 50;
++  const skip = (page - 1) * PAGE_SIZE;
++
++  const deptLinks = await prisma.userDepartment.findMany({
++    where: { userId },
++    select: { departmentId: true },
++  });
++  const deptIds = deptLinks.map((d) => d.departmentId);
++
++  // ── Tab unread counts ─────────────────────────────────────────────────────
++  // Fetch all projects visible to this worker (assigned + unassigned in dept)
++  const allVisible = await prisma.project.findMany({
++    where: {
++      OR: [
++        // Projects they're assigned to (any outcome)
++        { assignments: { some: { userId } } },
++        // Unassigned projects in their departments
++        {
++          status: "UNASSIGNED",
++          departmentId: { in: deptIds.length ? deptIds : ["__none__"] },
++        },
++      ],
++    },
++    select: {
++      status: true,
++      updatedAt: true,
++      messages: {
++        orderBy: { createdAt: "desc" },
++        take: 1,
++        select: { createdAt: true },
++      },
++      lastSeenBy: {
++        where: { userId },
++        select: { seenAt: true },
++        take: 1,
++      },
++      assignments: {
++        where: { userId },
++        select: { outcome: true, unassignedAt: true },
++        take: 1,
++      },
++    },
++  });
++
++  const unreadCounts: Record<string, number> = {};
++  for (const p of allVisible) {
++    const latestActivity = p.messages[0]?.createdAt ?? p.updatedAt;
++    const seenAt = p.lastSeenBy[0]?.seenAt;
++    const isUnread = !seenAt || latestActivity > seenAt;
++    if (!isUnread) continue;
++
++    const assignment = p.assignments[0];
++    let bucket: Tab | null = null;
++
++    if (p.status === "UNASSIGNED" && !assignment) {
++      bucket = "unassigned";
++    } else if (
++      (p.status === "IN_PROGRESS" || p.status === "REVISION") &&
++      assignment?.unassignedAt === null
++    ) {
++      bucket = "active";
++    } else if (p.status === "DELIVERED" && assignment?.unassignedAt === null) {
++      bucket = "delivered";
++    } else if (
++      p.status === "COMPLETED" &&
++      assignment?.unassignedAt === null &&
++      assignment?.outcome !== "CANCELLED"
++    ) {
++      bucket = "completed";
++    } else if (p.status === "CANCELLED" || assignment?.outcome === "CANCELLED") {
++      bucket = "cancelled";
++    }
++
++    if (bucket) unreadCounts[bucket] = (unreadCounts[bucket] ?? 0) + 1;
++  }
++
++  // ── Current tab where clause ──────────────────────────────────────────────
++  const where: any = {};
++
++  if (tab === "unassigned") {
++    where.status = "UNASSIGNED";
++    where.departmentId = { in: deptIds.length ? deptIds : ["__none__"] };
++  } else if (tab === "active") {
++    where.status = { in: ["IN_PROGRESS", "REVISION"] };
++    where.assignments = { some: { userId, unassignedAt: null } };
++  } else if (tab === "delivered") {
++    where.status = "DELIVERED";
++    where.assignments = { some: { userId, unassignedAt: null } };
++  } else if (tab === "completed") {
++    where.status = "COMPLETED";
++    where.assignments = { some: { userId, unassignedAt: null } };
++  } else if (tab === "cancelled") {
++    where.OR = [
++      {
++        status: "CANCELLED",
++        assignments: { some: { userId, unassignedAt: null } },
++      },
++      {
++        assignments: { some: { userId, outcome: "CANCELLED" as any } },
++      },
++    ];
++  }
++
++  if (q) {
++    if (where.OR) {
++      where.AND = [
++        { OR: where.OR },
++        { title: { contains: q, mode: "insensitive" } },
++      ];
++      delete where.OR;
++    } else {
++      where.title = { contains: q, mode: "insensitive" };
++    }
++  }
++
++  const [total, projects] = await Promise.all([
++    prisma.project.count({ where }),
++    prisma.project.findMany({
++      where,
++      orderBy: { createdAt: "desc" },
++      take: PAGE_SIZE,
++      skip,
++      select: {
++        id: true,
++        title: true,
++        status: true,
++        deadlineHours: true,
++        timerRunning: true,
++        timerLastResumedAt: true,
++        timerAccumulatedSeconds: true,
++        updatedAt: true,
++        department: { select: { name: true } },
++        paymentLines: {
++          where: { userId },
++          select: { amount: true },
++          take: 1,
++        },
++        assignments: {
++          where: { userId },
++          select: { outcome: true, unassignedAt: true },
++          take: 1,
++        },
++        // ✅ For unread indicator
++        messages: {
++          orderBy: { createdAt: "desc" },
++          take: 1,
++          select: { createdAt: true },
++        },
++        lastSeenBy: {
++          where: { userId },
++          select: { seenAt: true },
++          take: 1,
++        },
++      },
++    }),
++  ]);
++
++  return (
++    <div className="p-6 space-y-4">
++      <AnnouncementBannerDismissable storageKey="wredd:announce:projects">
++        <AnnouncementBanner />
++      </AnnouncementBannerDismissable>
++
++      <div>
++        <h1 className="text-xl font-semibold">My Projects</h1>
++        <p className="mt-1 text-sm text-muted-foreground">
++          Tabs are status-based. Active = IN_PROGRESS + REVISION.
++        </p>
++      </div>
++
++      <TabsRow tab={tab} q={q} unreadCounts={unreadCounts} />
++
++      <form
++        className="flex flex-col gap-2 sm:flex-row sm:items-center"
++        action="/app/worker"
++        method="get"
++      >
++        <input type="hidden" name="tab" value={tab} />
++        <input type="hidden" name="page" value="1" />
++        <input
++          name="q"
++          defaultValue={q}
++          placeholder="Search by title…"
++          className="w-full rounded-lg border bg-card px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-muted-foreground/30"
++        />
++        <Button type="submit" variant="secondary">Search</Button>
++        {q ? (
++          <Button asChild variant="ghost">
++            <Link href={`/app/worker?tab=${tab}&page=1`}>Clear</Link>
++          </Button>
++        ) : null}
++      </form>
++
++      <Pagination tab={tab} q={q} page={page} total={total} pageSize={PAGE_SIZE} />
++
++      <div className="rounded-lg border overflow-hidden">
++        <div className="grid grid-cols-12 gap-3 border-b bg-card px-4 py-3 text-xs font-medium text-muted-foreground">
++          <div className="col-span-4">Title</div>
++          <div className="col-span-2">Price</div>
++          <div className="col-span-2">Due in</div>
++          <div className="col-span-2">Status</div>
++          <div className="col-span-2 text-right">Action</div>
++        </div>
++
++        {projects.length === 0 ? (
++          <div className="p-6 text-sm text-muted-foreground">
++            No projects in this tab.
++          </div>
++        ) : (
++          <div className="divide-y">
++            {projects.map((p: any) => {
++              const myLine = p.paymentLines?.[0] ?? null;
++              const myAssignment = p.assignments?.[0] ?? null;
++              const isCancelledForWorker = myAssignment?.outcome === "CANCELLED";
++              const statusLabel = isCancelledForWorker ? "Cancelled (for you)" : p.status;
++              const isCancelledTab = tab === "cancelled";
++
++              // ✅ Unread indicator
++              const latestActivity = p.messages[0]?.createdAt ?? p.updatedAt;
++              const seenAt = p.lastSeenBy[0]?.seenAt;
++              const isUnread = !seenAt || latestActivity > seenAt;
++
++              return (
++                <div
++                  key={p.id}
++                  className="grid grid-cols-12 gap-3 px-4 py-3 hover:bg-muted/30 transition-colors"
++                >
++                  <div className="col-span-4">
++                    <div className="flex items-center gap-2">
++                      {isUnread && (
++                        <span
++                          className="h-2 w-2 flex-shrink-0 rounded-full bg-primary"
++                          title="Unread activity"
++                        />
++                      )}
++                      <div className="text-sm font-medium">{p.title}</div>
++                    </div>
++                    <div className="text-xs text-muted-foreground mt-0.5">
++                      {p.department.name}
++                    </div>
++                    {isUnread && (
++                      <form action={markProjectSeenAction} className="mt-1">
++                        <input type="hidden" name="projectId" value={p.id} />
++                        <button
++                          type="submit"
++                          className="text-[11px] text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors"
++                        >
++                          Mark as read
++                        </button>
++                      </form>
++                    )}
++                  </div>
++
++                  <div className="col-span-2 text-sm">
++                    {role === "REMOTE_WORKER"
++                      ? myLine
++                        ? fmtPKR(myLine.amount)
++                        : "—"
++                      : "—"}
++                  </div>
++
++                  <div className="col-span-2 text-sm">{dueInHM(p)}</div>
++
++                  <div className="col-span-2 text-sm">
++                    <span
++                      className={
++                        isCancelledForWorker
++                          ? "text-red-600 dark:text-red-400"
++                          : ""
++                      }
++                    >
++                      {statusLabel}
++                    </span>
++                  </div>
++
++                  <div className="col-span-2 flex justify-end">
++                    {isCancelledTab ? (
++                      <span className="text-xs text-muted-foreground italic">
++                        No access
++                      </span>
++                    ) : (
++                      <Button asChild size="sm" variant="secondary">
++                        <Link href={`/app/projects/${p.id}`}>View</Link>
++                      </Button>
++                    )}
++                  </div>
++                </div>
++              );
++            })}
++          </div>
++        )}
++      </div>
++
++      <Pagination tab={tab} q={q} page={page} total={total} pageSize={PAGE_SIZE} />
++    </div>
++  );
++}
+diff --git a/lib/actions/mark-seen.ts b/lib/actions/mark-seen.ts
+new file mode 100644
+index 0000000..faa7daf
+--- /dev/null
++++ b/lib/actions/mark-seen.ts
+@@ -0,0 +1,48 @@
++"use server";
++
++import { getPrisma } from "@/lib/prisma";
++import { readSession } from "@/lib/auth";
++import { revalidatePath } from "next/cache";
++
++const prisma = getPrisma();
++
++/**
++ * Upserts a ProjectLastSeen record for the current user + project.
++ * Called from the "Mark as read" button on project index cards.
++ */
++export async function markProjectSeenAction(formData: FormData) {
++  const session = await readSession();
++  if (!session?.user) return;
++
++  const userId = session.user.id;
++  const projectId = String(formData.get("projectId") || "");
++  if (!projectId) return;
++
++  try {
++    await prisma.projectLastSeen.upsert({
++      where: { userId_projectId: { userId, projectId } },
++      create: { userId, projectId, seenAt: new Date() },
++      update: { seenAt: new Date() },
++    });
++  } catch {
++    // non-critical — don't break if this fails
++  }
++
++  revalidatePath("/app/projects");
++  revalidatePath("/app/worker");
++}
++
++/**
++ * Direct variant for server components (project detail page auto-mark).
++ */
++export async function markSeenForUser(userId: string, projectId: string) {
++  try {
++    await getPrisma().projectLastSeen.upsert({
++      where: { userId_projectId: { userId, projectId } },
++      create: { userId, projectId, seenAt: new Date() },
++      update: { seenAt: new Date() },
++    });
++  } catch {
++    // non-critical
++  }
++}
+diff --git a/lib/notify.ts b/lib/notify.ts
+index fea1739..67979a5 100644
+--- a/lib/notify.ts
++++ b/lib/notify.ts
+@@ -1,292 +1,332 @@
+-// /lib/notify.ts
+-import { getPrisma } from "@/lib/prisma";
+-import { sendEmail } from "@/lib/email";
+-import { NotificationType } from "@prisma/client";
+-
+-const prisma = getPrisma();
+-
+-type NotifyArgs = {
+-  type: NotificationType;
+-  projectId?: string;
+-  actorId?: string | null;
+-
+-  title: string;
+-  body?: string | null;
+-  href?: string | null;
+-
+-  recipients:
+-    | { kind: "PROJECT_ASSIGNEES_ACTIVE" }
+-    | { kind: "PROJECT_AUDIENCE" } // assignees + watchers (in-app)
+-    | { kind: "DEPARTMENT_USERS"; departmentId: string; workersOnly?: boolean }
+-    | { kind: "SPECIFIC_USERS"; userIds: string[] }; // ops tasks + direct targeting
+-};
+-
+-function uniq(ids: string[]) {
+-  return Array.from(new Set(ids));
+-}
+-
+-function exclude(ids: string[], actorId?: string | null) {
+-  if (!actorId) return ids;
+-  return ids.filter((id) => id !== actorId);
+-}
+-
+-async function getProjectAssigneeUserIds(projectId: string) {
+-  const rows = await prisma.projectAssignment.findMany({
+-    where: { projectId, unassignedAt: null },
+-    select: { userId: true, user: { select: { archivedAt: true } } },
+-  });
+-
+-  return rows.filter((r) => !r.user.archivedAt).map((r) => r.userId);
+-}
+-
+-async function getProjectWatcherUserIds(projectId: string) {
+-  const rows = await prisma.projectWatcher.findMany({
+-    where: { projectId },
+-    select: { userId: true, user: { select: { archivedAt: true } } },
+-  });
+-
+-  return rows.filter((r) => !r.user.archivedAt).map((r) => r.userId);
+-}
+-
+-async function getDepartmentUserIds(departmentId: string, workersOnly?: boolean) {
+-  const rows = await prisma.userDepartment.findMany({
+-    where: { departmentId },
+-    select: {
+-      userId: true,
+-      user: { select: { archivedAt: true, role: true } },
+-    },
+-  });
+-
+-  return rows
+-    .filter((r) => !r.user.archivedAt)
+-    .filter((r) =>
+-      workersOnly
+-        ? r.user.role === "REMOTE_WORKER" || r.user.role === "ONSITE_EMPLOYEE"
+-        : true
+-    )
+-    .map((r) => r.userId);
+-}
+-
+-/**
+- * Maps a notification type to the preference column that gates its email.
+- * Returns null = no email for this type (in-app only).
+- */
+-function emailGateForType(type: NotificationType): string | null {
+-  // In-app only
+-  if (type === "PROJECT_CREATED_UNASSIGNED") return null;
+-
+-  // Project events
+-  if (type === "PROJECT_MESSAGE") return "emailProjectMessages";
+-  if (type === "PROJECT_STATUS_CHANGED") return "emailProjectStatus";
+-  if (type === "PROJECT_COMPLETED" || type === "PROJECT_CANCELLED")
+-    return "emailProjectCompletion";
+-  if (type === "PROJECT_RATED") return "emailProjectRatings";
+-  if (type === "ASSIGNMENT_ADDED" || type === "ASSIGNMENT_REMOVED")
+-    return "emailAssignments";
+-
+-  // Ops task events
+-  if (type === "TASK_ASSIGNED" || type === "TASK_REOPENED")
+-    return "emailTaskAssigned";
+-  if (type === "TASK_DUE_SOON") return "emailTaskDueSoon";
+-
+-  return null;
+-}
+-
+-async function getEmailEligibleRecipients(
+-  userIds: string[],
+-  type: NotificationType
+-) {
+-  const gate = emailGateForType(type);
+-  if (!gate) return [];
+-
+-  const users = await prisma.user.findMany({
+-    where: { id: { in: userIds }, archivedAt: null },
+-    select: {
+-      id: true,
+-      email: true,
+-      notificationPreferences: {
+-        select: {
+-          emailProjectMessages: true,
+-          emailProjectStatus: true,
+-          emailProjectCompletion: true,
+-          emailProjectRatings: true,
+-          emailAssignments: true,
+-          emailTaskAssigned: true,
+-          emailTaskDueSoon: true,
+-        },
+-      },
+-    },
+-  });
+-
+-  // Default: if preference row is missing, treat all flags as true
+-  return users.filter((u) => {
+-    const pref = u.notificationPreferences;
+-    if (!pref) return true;
+-    return (pref as any)[gate] === true;
+-  });
+-}
+-
+-function buildEmailHtml(args: {
+-  title: string;
+-  body?: string | null;
+-  href?: string | null;
+-}) {
+-  const safeBody = args.body
+-    ? args.body.replace(/</g, "&lt;").replace(/>/g, "&gt;")
+-    : "";
+-  const appUrl = (process.env.APP_URL || "").replace(/\/$/, "");
+-  const fullHref = args.href
+-    ? args.href.startsWith("/")
+-      ? `${appUrl}${args.href}`
+-      : args.href
+-    : null;
+-  const link = fullHref
+-    ? `<p><a href="${fullHref}">Open in WREDD</a></p>`
+-    : "";
+-  return `
+-    <div style="font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto;">
+-      <h2 style="margin:0 0 8px 0;">${args.title}</h2>
+-      ${safeBody ? `<p style="margin:0 0 12px 0; white-space:pre-wrap;">${safeBody}</p>` : ""}
+-      ${link}
+-      <hr style="margin:16px 0; opacity:.2;" />
+-      <p style="margin:0; font-size:12px; opacity:.7;">WREDD Dashboard</p>
+-    </div>
+-  `;
+-}
+-
+-export async function notify(args: NotifyArgs) {
+-  // ── 1. Resolve recipient IDs ───────────────────────────────────────────────
+-
+-  let recipientIds: string[] = [];
+-
+-  if (args.recipients.kind === "PROJECT_ASSIGNEES_ACTIVE") {
+-    if (!args.projectId) return;
+-    recipientIds = await getProjectAssigneeUserIds(args.projectId);
+-    recipientIds = exclude(recipientIds, args.actorId);
+-  }
+-
+-  if (args.recipients.kind === "PROJECT_AUDIENCE") {
+-    if (!args.projectId) return;
+-    const [assignees, watchers] = await Promise.all([
+-      getProjectAssigneeUserIds(args.projectId),
+-      getProjectWatcherUserIds(args.projectId),
+-    ]);
+-    recipientIds = exclude(uniq([...assignees, ...watchers]), args.actorId);
+-  }
+-
+-  if (args.recipients.kind === "DEPARTMENT_USERS") {
+-    recipientIds = await getDepartmentUserIds(
+-      args.recipients.departmentId,
+-      args.recipients.workersOnly
+-    );
+-    recipientIds = exclude(recipientIds, args.actorId);
+-  }
+-
+-  if (args.recipients.kind === "SPECIFIC_USERS") {
+-    // Filter out empty strings, then exclude actor
+-    recipientIds = exclude(
+-      args.recipients.userIds.filter(Boolean),
+-      args.actorId
+-    );
+-  }
+-
+-  recipientIds = uniq(recipientIds);
+-  if (!recipientIds.length) return;
+-
+-  // ── 2. Create in-app notifications ────────────────────────────────────────
+-
+-  const created = await prisma.$transaction(async (tx) => {
+-    const rows = await Promise.all(
+-      recipientIds.map((userId) =>
+-        tx.notification.create({
+-          data: {
+-            userId,
+-            type: args.type,
+-            title: args.title,
+-            body: args.body ?? null,
+-            href: args.href ?? null,
+-            projectId: args.projectId ?? null,
+-            actorId: args.actorId ?? null,
+-          },
+-          select: { id: true, userId: true },
+-        })
+-      )
+-    );
+-    return rows;
+-  });
+-
+-  // ── 3. Queue email deliveries ─────────────────────────────────────────────
+-
+-  const gate = emailGateForType(args.type);
+-  if (!gate) return;
+-
+-  // Only send emails for project-assignee events or direct targeting
+-  const kind = args.recipients.kind;
+-  if (kind !== "PROJECT_ASSIGNEES_ACTIVE" && kind !== "SPECIFIC_USERS") return;
+-
+-  const eligible = await getEmailEligibleRecipients(
+-    created.map((c) => c.userId),
+-    args.type
+-  );
+-
+-  if (!eligible.length) return;
+-
+-  const subject = args.title;
+-  const html = buildEmailHtml({
+-    title: args.title,
+-    body: args.body,
+-    href: args.href,
+-  });
+-
+-  await prisma.notificationDelivery.createMany({
+-    data: eligible.map((u) => ({
+-      notificationId: created.find((c) => c.userId === u.id)?.id ?? null,
+-      userId: u.id,
+-      toEmail: u.email,
+-      subject,
+-      html,
+-      status: "PENDING",
+-    })),
+-  });
+-}
+-
+-/**
+- * Called from the cron route to flush pending email deliveries.
+- */
+-export async function sendPendingEmailDeliveries(limit = 25) {
+-  const pending = await prisma.notificationDelivery.findMany({
+-    where: { status: "PENDING" },
+-    orderBy: { createdAt: "asc" },
+-    take: limit,
+-  });
+-
+-  for (const d of pending) {
+-    try {
+-      await prisma.notificationDelivery.update({
+-        where: { id: d.id },
+-        data: {
+-          attempts: d.attempts + 1,
+-          lastAttemptAt: new Date(),
+-        },
+-      });
+-
+-      await sendEmail({ to: d.toEmail, subject: d.subject, html: d.html });
+-
+-      await prisma.notificationDelivery.update({
+-        where: { id: d.id },
+-        data: { status: "SENT", sentAt: new Date(), error: null },
+-      });
+-    } catch (e: any) {
+-      await prisma.notificationDelivery.update({
+-        where: { id: d.id },
+-        data: {
+-          status: "FAILED",
+-          error: String(e?.message ?? e),
+-          lastAttemptAt: new Date(),
+-        },
+-      });
+-    }
+-  }
+-
+-  return { processed: pending.length };
+-}
+\ No newline at end of file
++// /lib/notify.ts
++import { getPrisma } from "@/lib/prisma";
++import { sendEmail } from "@/lib/email";
++import { NotificationType } from "@prisma/client";
++
++const prisma = getPrisma();
++
++type NotifyArgs = {
++  type: NotificationType;
++  projectId?: string;
++  actorId?: string | null;
++
++  title: string;
++  body?: string | null;
++  href?: string | null;
++
++  recipients:
++    | { kind: "PROJECT_ASSIGNEES_ACTIVE" }
++    | { kind: "PROJECT_AUDIENCE" } // assignees + watchers (in-app AND email)
++    | { kind: "DEPARTMENT_USERS"; departmentId: string; workersOnly?: boolean }
++    | { kind: "SPECIFIC_USERS"; userIds: string[] };
++};
++
++function uniq(ids: string[]) {
++  return Array.from(new Set(ids));
++}
++
++function exclude(ids: string[], actorId?: string | null) {
++  if (!actorId) return ids;
++  return ids.filter((id) => id !== actorId);
++}
++
++async function getProjectAssigneeUserIds(projectId: string) {
++  const rows = await prisma.projectAssignment.findMany({
++    where: { projectId, unassignedAt: null },
++    select: { userId: true, user: { select: { archivedAt: true } } },
++  });
++  return rows.filter((r) => !r.user.archivedAt).map((r) => r.userId);
++}
++
++async function getProjectWatcherUserIds(projectId: string) {
++  const rows = await prisma.projectWatcher.findMany({
++    where: { projectId },
++    select: { userId: true, user: { select: { archivedAt: true } } },
++  });
++  return rows.filter((r) => !r.user.archivedAt).map((r) => r.userId);
++}
++
++async function getDepartmentUserIds(departmentId: string, workersOnly?: boolean) {
++  const rows = await prisma.userDepartment.findMany({
++    where: { departmentId },
++    select: {
++      userId: true,
++      user: { select: { archivedAt: true, role: true } },
++    },
++  });
++  return rows
++    .filter((r) => !r.user.archivedAt)
++    .filter((r) =>
++      workersOnly
++        ? r.user.role === "REMOTE_WORKER" || r.user.role === "ONSITE_EMPLOYEE"
++        : true
++    )
++    .map((r) => r.userId);
++}
++
++function emailGateForType(type: NotificationType): string | null {
++  if (type === "PROJECT_CREATED_UNASSIGNED") return null;
++  if (type === "PROJECT_MESSAGE") return "emailProjectMessages";
++  if (type === "PROJECT_STATUS_CHANGED") return "emailProjectStatus";
++  if (type === "PROJECT_COMPLETED" || type === "PROJECT_CANCELLED")
++    return "emailProjectCompletion";
++  if (type === "PROJECT_RATED") return "emailProjectRatings";
++  if (type === "ASSIGNMENT_ADDED" || type === "ASSIGNMENT_REMOVED")
++    return "emailAssignments";
++  if (type === "TASK_ASSIGNED" || type === "TASK_REOPENED")
++    return "emailTaskAssigned";
++  if (type === "TASK_DUE_SOON") return "emailTaskDueSoon";
++  return null;
++}
++
++async function getEmailEligibleRecipients(
++  userIds: string[],
++  type: NotificationType
++) {
++  const gate = emailGateForType(type);
++  if (!gate) return [];
++
++  const users = await prisma.user.findMany({
++    where: { id: { in: userIds }, archivedAt: null },
++    select: {
++      id: true,
++      email: true,
++      notificationPreferences: {
++        select: {
++          emailProjectMessages: true,
++          emailProjectStatus: true,
++          emailProjectCompletion: true,
++          emailProjectRatings: true,
++          emailAssignments: true,
++          emailTaskAssigned: true,
++          emailTaskDueSoon: true,
++        },
++      },
++    },
++  });
++
++  return users.filter((u) => {
++    const pref = u.notificationPreferences;
++    if (!pref) return true;
++    return (pref as any)[gate] === true;
++  });
++}
++
++function buildEmailHtml(args: {
++  title: string;
++  body?: string | null;
++  href?: string | null;
++  projectTitle?: string | null;
++  actorName?: string | null;
++}) {
++  const appUrl = (process.env.APP_URL || "").replace(/\/$/, "");
++  const fullHref = args.href
++    ? args.href.startsWith("/")
++      ? `${appUrl}${args.href}`
++      : args.href
++    : null;
++
++  const esc = (s: string) =>
++    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
++
++  const projectBlock = args.projectTitle
++    ? `<div style="margin:0 0 16px;padding:12px 16px;background:#f5f5f5;border-radius:8px;border-left:4px solid #8F4043;">
++        <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:#999;margin-bottom:4px;">Project</div>
++        <div style="font-size:15px;font-weight:700;color:#1B1B1B;">${esc(args.projectTitle)}</div>
++      </div>`
++    : "";
++
++  const actorBlock = args.actorName
++    ? `<p style="margin:0 0 12px;font-size:13px;color:#555;">By: <strong style="color:#1B1B1B;">${esc(args.actorName)}</strong></p>`
++    : "";
++
++  const bodyBlock = args.body
++    ? `<p style="margin:0 0 16px;font-size:14px;color:#333;white-space:pre-wrap;">${esc(args.body)}</p>`
++    : "";
++
++  const ctaBlock = fullHref
++    ? `<p style="margin:0;">
++        <a href="${fullHref}" style="display:inline-block;padding:10px 22px;border-radius:8px;text-decoration:none;background:#8F4043;color:#fff;font-weight:700;font-size:14px;">
++          Open Project &rarr;
++        </a>
++      </p>`
++    : "";
++
++  return `
++    <div style="font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;">
++      <div style="margin-bottom:8px;font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:#8F4043;font-weight:700;">WREDD Dashboard</div>
++      <h2 style="margin:0 0 20px;font-size:20px;font-weight:700;color:#1B1B1B;line-height:1.3;">${esc(args.title)}</h2>
++      ${projectBlock}
++      ${actorBlock}
++      ${bodyBlock}
++      ${ctaBlock}
++      <hr style="margin:28px 0 16px;border:none;border-top:1px solid #eee;" />
++      <p style="margin:0;font-size:11px;color:#aaa;line-height:1.5;">WREDD Internal Dashboard &bull; You received this because you are assigned to or watching this project.</p>
++    </div>
++  `;
++}
++
++export async function notify(args: NotifyArgs) {
++  // ── 1. Resolve recipient IDs ───────────────────────────────────────────────
++
++  let recipientIds: string[] = [];
++
++  if (args.recipients.kind === "PROJECT_ASSIGNEES_ACTIVE") {
++    if (!args.projectId) return;
++    recipientIds = await getProjectAssigneeUserIds(args.projectId);
++    recipientIds = exclude(recipientIds, args.actorId);
++  }
++
++  if (args.recipients.kind === "PROJECT_AUDIENCE") {
++    if (!args.projectId) return;
++    const [assignees, watchers] = await Promise.all([
++      getProjectAssigneeUserIds(args.projectId),
++      getProjectWatcherUserIds(args.projectId),
++    ]);
++    recipientIds = exclude(uniq([...assignees, ...watchers]), args.actorId);
++  }
++
++  if (args.recipients.kind === "DEPARTMENT_USERS") {
++    recipientIds = await getDepartmentUserIds(
++      args.recipients.departmentId,
++      args.recipients.workersOnly
++    );
++    recipientIds = exclude(recipientIds, args.actorId);
++  }
++
++  if (args.recipients.kind === "SPECIFIC_USERS") {
++    recipientIds = exclude(
++      args.recipients.userIds.filter(Boolean),
++      args.actorId
++    );
++  }
++
++  recipientIds = uniq(recipientIds);
++  if (!recipientIds.length) return;
++
++  // ── 2. Create in-app notifications ────────────────────────────────────────
++
++  const created = await prisma.$transaction(async (tx) => {
++    const rows = await Promise.all(
++      recipientIds.map((userId) =>
++        tx.notification.create({
++          data: {
++            userId,
++            type: args.type,
++            title: args.title,
++            body: args.body ?? null,
++            href: args.href ?? null,
++            projectId: args.projectId ?? null,
++            actorId: args.actorId ?? null,
++          },
++          select: { id: true, userId: true },
++        })
++      )
++    );
++    return rows;
++  });
++
++  // ── 3. Queue email deliveries ─────────────────────────────────────────────
++
++  const gate = emailGateForType(args.type);
++  if (!gate) return;
++
++  // ✅ Fixed: PROJECT_AUDIENCE now sends emails too.
++  // Previously only PROJECT_ASSIGNEES_ACTIVE and SPECIFIC_USERS sent emails,
++  // which meant watchers (admins/managers watching a project) never got emails.
++  const kind = args.recipients.kind;
++  if (
++    kind !== "PROJECT_ASSIGNEES_ACTIVE" &&
++    kind !== "SPECIFIC_USERS" &&
++    kind !== "PROJECT_AUDIENCE"
++  ) {
++    return;
++  }
++
++  const eligible = await getEmailEligibleRecipients(
++    created.map((c) => c.userId),
++    args.type
++  );
++  if (!eligible.length) return;
++
++  // ── 4. Fetch rich context for email ──────────────────────────────────────
++
++  let projectTitle: string | null = null;
++  if (args.projectId) {
++    const proj = await prisma.project.findUnique({
++      where: { id: args.projectId },
++      select: { title: true },
++    });
++    projectTitle = proj?.title ?? null;
++  }
++
++  let actorName: string | null = null;
++  if (args.actorId) {
++    const actor = await prisma.user.findUnique({
++      where: { id: args.actorId },
++      select: { fullName: true },
++    });
++    actorName = actor?.fullName ?? null;
++  }
++
++  const subject = projectTitle
++    ? `${args.title} — ${projectTitle}`
++    : args.title;
++
++  const html = buildEmailHtml({
++    title: args.title,
++    body: args.body,
++    href: args.href,
++    projectTitle,
++    actorName,
++  });
++
++  await prisma.notificationDelivery.createMany({
++    data: eligible.map((u) => ({
++      notificationId: created.find((c) => c.userId === u.id)?.id ?? null,
++      userId: u.id,
++      toEmail: u.email,
++      subject,
++      html,
++      status: "PENDING",
++    })),
++  });
++}
++
++/**
++ * Called from the cron route to flush pending email deliveries.
++ */
++export async function sendPendingEmailDeliveries(limit = 25) {
++  const pending = await prisma.notificationDelivery.findMany({
++    where: { status: "PENDING" },
++    orderBy: { createdAt: "asc" },
++    take: limit,
++  });
++
++  for (const d of pending) {
++    try {
++      await prisma.notificationDelivery.update({
++        where: { id: d.id },
++        data: { attempts: d.attempts + 1, lastAttemptAt: new Date() },
++      });
++
++      await sendEmail({ to: d.toEmail, subject: d.subject, html: d.html });
++
++      await prisma.notificationDelivery.update({
++        where: { id: d.id },
++        data: { status: "SENT", sentAt: new Date(), error: null },
++      });
++    } catch (e: any) {
++      await prisma.notificationDelivery.update({
++        where: { id: d.id },
++        data: {
++          status: "FAILED",
++          error: String(e?.message ?? e),
++          lastAttemptAt: new Date(),
++        },
++      });
++    }
++  }
++
++  return { processed: pending.length };
++}
+diff --git a/prisma/schema.prisma b/prisma/schema.prisma
+index 223713d..a941a3a 100644
+--- a/prisma/schema.prisma
++++ b/prisma/schema.prisma
+@@ -210,6 +210,8 @@ model User {
+   notificationPreferences NotificationPreference?
+ 
+ // Ops Tasks
++  projectLastSeen     ProjectLastSeen[]
++
+   opsTasksAssigned    OpsTask[]         @relation("OpsTaskAssignee")
+   opsTasksCreated     OpsTask[]         @relation("OpsTaskCreatedBy")
+   opsTaskInstances    OpsTaskInstance[] @relation("OpsTaskInstanceAssignee")
+@@ -384,6 +386,8 @@ model Project {
+   onsiteRating  OnsiteProjectRating?
+   onsiteCredits OnsitePointCredit[]
+ 
++  lastSeenBy    ProjectLastSeen[]
++
+   @@index([departmentId])
+   @@index([status])
+   @@index([createdById])
+@@ -912,6 +916,27 @@ enum OpsTaskType {
+   RECURRING
+ }
+ 
++/**
++ * =========================
++ * PROJECT LAST SEEN
++ * Tracks when each user last opened a project page.
++ * Used to show unread indicators on project index cards.
++ * =========================
++ */
++
++model ProjectLastSeen {
++  userId    String
++  projectId String
++  seenAt    DateTime
++
++  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
++  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
++
++  @@id([userId, projectId])
++  @@index([userId])
++  @@index([projectId])
++}
++
+ model OpsTask {
+   id          String     @id @default(cuid())
+   title       String
+-- 
+2.43.0
+
