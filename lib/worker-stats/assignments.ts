@@ -7,6 +7,23 @@
 //   getWorkerAssignmentStats(userId)        → single worker, full detail
 //   getMultipleWorkerStats(userIds)         → batch, returns Map<userId, stats>
 //                                             (used by admin performance table)
+//
+// ON-TIME SCORING (v2 — gradient, not binary)
+// ─────────────────────────────────────────────
+// Each eligible assignment gets a 0–100 score based on how late delivery was
+// as a ratio of the project deadline. avgOnTimeScore is the mean across all
+// eligible assignments.
+//
+// hoursLate source (per assignment):
+//   1. assignment.hoursLate set by manager at completion → use directly
+//   2. null (auto) → max(0, timerAccumulatedSeconds / 3600 - deadlineHours)
+//
+// latenessRatio = hoursLate / deadlineHours
+//   0%        → 100 (on time)
+//   ≤10%      →  80 (minor)
+//   ≤25%      →  60 (moderate)
+//   ≤50%      →  30 (significant)
+//   >50%      →   0 (severe)
 
 import { getPrisma } from "@/lib/prisma";
 
@@ -21,31 +38,58 @@ export type WorkerAssignmentStats = {
   totalConcluded: number;    // completed + cancelledByWorker + removedByManager
 
   // ── Rates (0–1) ───────────────────────────────────────────────────────────
-  // Cancellation rate counts only worker-caused cancellations, not manager removals.
   cancellationRate: number;  // cancelledByWorker / totalConcluded
   completionRate: number;    // completed / totalConcluded
 
-  // ── On-time delivery ──────────────────────────────────────────────────────
-  // Only counts completed projects where deadlineHours > 0 (deadline was actually set).
-  // "On time" = timerAccumulatedSeconds ≤ deadlineHours × 3600
-  onTimeEligible: number;    // completed projects with a deadline set
-  onTimeCount: number;       // of those, how many were delivered within deadline
-  onTimeRate: number;        // onTimeCount / onTimeEligible (0 if no eligible projects)
+  // ── On-time delivery (v2 — gradient) ──────────────────────────────────────
+  onTimeEligible: number;        // completed assignments with deadlineHours > 0
+  onTimeCount: number;           // of those, how many had hoursLate === 0 (perfectly on time)
+  onTimeRate: number;            // onTimeCount / onTimeEligible (kept for display)
+  avgOnTimeScore: number | null; // 0–100 gradient average; null if no eligible assignments
 
   // ── Revision rate ─────────────────────────────────────────────────────────
-  // Counts how many of the worker's completed projects had at least one revision request.
-  // A project with 3 revision cycles still counts as 1 (revised vs not revised).
   revisionCount: number;     // completed projects that had ≥1 REVISION_REQUEST message
   revisionRate: number;      // revisionCount / completed (0 if no completed projects)
 
   // ── BD ratings ────────────────────────────────────────────────────────────
-  // Averaged across all rated completed projects the worker was assigned to.
   ratingCount: number;
   avgQuality: number | null;
   avgSpeed: number | null;
   avgCommunication: number | null;
   avgRating: number | null;  // mean of quality + speed + communication
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Gradient scoring helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Resolves how many hours late a worker was for one assignment.
+ * Prefers manager-set hoursLate; falls back to auto-calc from project timer.
+ */
+function resolveHoursLate(
+  assignmentHoursLate: number | null,
+  timerAccumulatedSeconds: number,
+  deadlineHours: number
+): number {
+  if (assignmentHoursLate !== null) return Math.max(0, assignmentHoursLate);
+  const actualHours = timerAccumulatedSeconds / 3600;
+  return Math.max(0, actualHours - deadlineHours);
+}
+
+/**
+ * Maps lateness ratio (hoursLate / deadlineHours) to a 0–100 on-time score.
+ * Bracket-based so thresholds are easy to understand and reason about.
+ */
+function latenessRatioToScore(hoursLate: number, deadlineHours: number): number {
+  if (deadlineHours <= 0) return 100;
+  const ratio = hoursLate / deadlineHours;
+  if (ratio <= 0)    return 100;
+  if (ratio <= 0.10) return 80;
+  if (ratio <= 0.25) return 60;
+  if (ratio <= 0.50) return 30;
+  return 0;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SINGLE WORKER
@@ -56,7 +100,7 @@ export async function getWorkerAssignmentStats(
 ): Promise<WorkerAssignmentStats> {
   const prisma = getPrisma();
 
-  // 1) All concluded assignments with project deadline data
+  // 1) All concluded assignments with project deadline data + hoursLate
   const concluded = await prisma.projectAssignment.findMany({
     where: {
       userId,
@@ -65,6 +109,7 @@ export async function getWorkerAssignmentStats(
     select: {
       outcome: true,
       projectId: true,
+      hoursLate: true,
       project: {
         select: {
           deadlineHours: true,
@@ -89,24 +134,35 @@ export async function getWorkerAssignmentStats(
   const removedByManager  = concluded.filter((a) => a.outcome === "REMOVED").length;
   const totalConcluded    = completed + cancelledByWorker + removedByManager;
 
-  // ── On-time delivery ────────────────────────────────────────────────────
+  // ── On-time delivery (gradient) ─────────────────────────────────────────
   const completedRows = concluded.filter((a) => a.outcome === "COMPLETED");
   const completedProjectIds = completedRows.map((a) => a.projectId);
 
-  const onTimeEligible = completedRows.filter(
+  const eligibleRows = completedRows.filter(
     (a) => (a.project.deadlineHours ?? 0) > 0
-  ).length;
+  );
+  const onTimeEligible = eligibleRows.length;
 
-  const onTimeCount = completedRows.filter(
-    (a) =>
-      (a.project.deadlineHours ?? 0) > 0 &&
-      a.project.timerAccumulatedSeconds <= (a.project.deadlineHours ?? 0) * 3600
-  ).length;
+  let onTimeCount = 0;
+  let avgOnTimeScore: number | null = null;
+
+  if (onTimeEligible > 0) {
+    const scores = eligibleRows.map((a) => {
+      const deadlineHours = a.project.deadlineHours ?? 0;
+      const hoursLate = resolveHoursLate(
+        a.hoursLate,
+        a.project.timerAccumulatedSeconds,
+        deadlineHours
+      );
+      if (hoursLate === 0) onTimeCount++;
+      return latenessRatioToScore(hoursLate, deadlineHours);
+    });
+    avgOnTimeScore = scores.reduce((s, v) => s + v, 0) / scores.length;
+  }
 
   // ── Revision rate ───────────────────────────────────────────────────────
   let revisionCount = 0;
   if (completedProjectIds.length > 0) {
-    // Count distinct projects that had at least one REVISION_REQUEST message
     const revisedGroups = await prisma.projectMessage.groupBy({
       by: ["projectId"],
       where: {
@@ -133,10 +189,10 @@ export async function getWorkerAssignmentStats(
     ratingCount = ratings.length;
 
     if (ratingCount > 0) {
-      avgQuality      = ratings.reduce((s, r) => s + r.quality, 0)       / ratingCount;
-      avgSpeed        = ratings.reduce((s, r) => s + r.speed, 0)         / ratingCount;
+      avgQuality       = ratings.reduce((s, r) => s + r.quality, 0)       / ratingCount;
+      avgSpeed         = ratings.reduce((s, r) => s + r.speed, 0)         / ratingCount;
       avgCommunication = ratings.reduce((s, r) => s + r.communication, 0) / ratingCount;
-      avgRating       = (avgQuality + avgSpeed + avgCommunication) / 3;
+      avgRating        = (avgQuality + avgSpeed + avgCommunication) / 3;
     }
   }
 
@@ -151,7 +207,8 @@ export async function getWorkerAssignmentStats(
     completionRate   : totalConcluded > 0 ? completed         / totalConcluded : 0,
     onTimeEligible,
     onTimeCount,
-    onTimeRate : onTimeEligible > 0 ? onTimeCount / onTimeEligible : 0,
+    onTimeRate   : onTimeEligible > 0 ? onTimeCount / onTimeEligible : 0,
+    avgOnTimeScore,
     revisionCount,
     revisionRate : completed > 0 ? revisionCount / completed : 0,
     ratingCount,
@@ -183,6 +240,7 @@ export async function getMultipleWorkerStats(
       userId: true,
       outcome: true,
       projectId: true,
+      hoursLate: true,
       project: {
         select: {
           deadlineHours: true,
@@ -238,7 +296,6 @@ export async function getMultipleWorkerStats(
         })
       : [];
 
-  // Map projectId → rating for fast lookup
   const ratingByProject = new Map(allRatings.map((r) => [r.projectId, r]));
 
   // ── Assemble per-user stats ─────────────────────────────────────────────
@@ -253,18 +310,30 @@ export async function getMultipleWorkerStats(
     const totalConcluded    = completed + cancelledByWorker + removedByManager;
     const active            = activeByUser.get(userId) ?? 0;
 
-    const completedRows     = userRows.filter((a) => a.outcome === "COMPLETED");
-    const onTimeEligible    = completedRows.filter((a) => (a.project.deadlineHours ?? 0) > 0).length;
-    const onTimeCount       = completedRows.filter(
-      (a) =>
-        (a.project.deadlineHours ?? 0) > 0 &&
-        a.project.timerAccumulatedSeconds <= (a.project.deadlineHours ?? 0) * 3600
-    ).length;
+    const completedRows  = userRows.filter((a) => a.outcome === "COMPLETED");
+    const eligibleRows   = completedRows.filter((a) => (a.project.deadlineHours ?? 0) > 0);
+    const onTimeEligible = eligibleRows.length;
 
-    const completedIds      = completedByUser.get(userId) ?? [];
-    const revisionCount     = completedIds.filter((id) => revisedProjectIds.has(id)).length;
+    let onTimeCount = 0;
+    let avgOnTimeScore: number | null = null;
 
-    // Ratings for this user's completed projects
+    if (onTimeEligible > 0) {
+      const scores = eligibleRows.map((a) => {
+        const deadlineHours = a.project.deadlineHours ?? 0;
+        const hoursLate = resolveHoursLate(
+          a.hoursLate,
+          a.project.timerAccumulatedSeconds,
+          deadlineHours
+        );
+        if (hoursLate === 0) onTimeCount++;
+        return latenessRatioToScore(hoursLate, deadlineHours);
+      });
+      avgOnTimeScore = scores.reduce((s, v) => s + v, 0) / scores.length;
+    }
+
+    const completedIds  = completedByUser.get(userId) ?? [];
+    const revisionCount = completedIds.filter((id) => revisedProjectIds.has(id)).length;
+
     const userRatings = completedIds
       .map((id) => ratingByProject.get(id))
       .filter((r): r is NonNullable<typeof r> => r !== undefined);
@@ -293,7 +362,8 @@ export async function getMultipleWorkerStats(
       completionRate   : totalConcluded > 0 ? completed         / totalConcluded : 0,
       onTimeEligible,
       onTimeCount,
-      onTimeRate : onTimeEligible > 0 ? onTimeCount / onTimeEligible : 0,
+      onTimeRate   : onTimeEligible > 0 ? onTimeCount / onTimeEligible : 0,
+      avgOnTimeScore,
       revisionCount,
       revisionRate : completed > 0 ? revisionCount / completed : 0,
       ratingCount,

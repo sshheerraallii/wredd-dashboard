@@ -484,7 +484,13 @@ export default async function ProjectPage({ params }: { params: { id: string } }
       />
 
       {showStatusControls ? (
-        <StatusControls projectId={project.id} role={role} status={project.status} />
+         <StatusControls
+ projectId={project.id}
+role={role}
+status={project.status}
+activeWorkers={assigned}
+deadlineHours={project.deadlineHours ?? null}
+/>
       ) : null}
 
       {canDeliver ? (

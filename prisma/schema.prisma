@@ -565,6 +565,7 @@ model ProjectAssignment {
   // Hours allocated to this worker for this project (onsite only)
   // Nullable: only set for ONSITE_EMPLOYEE assignments
   allocatedHours Int?
+  hoursLate      Int?
 
   project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user       User    @relation("AssignmentUser", fields: [userId], references: [id], onDelete: Cascade)

@@ -7,20 +7,22 @@
 //
 // ── Signals & base weights ──────────────────────────────────────────────────
 //   Completion rate       40%   (completed / totalConcluded)
-//   On-time delivery      30%   (delivered within deadlineHours)
+//   On-time delivery      30%   (gradient: 0–100 based on lateness ratio)
 //   Low revision rate     20%   (1 − revisionRate)
 //   BD rating average     10%   (avgRating mapped 1–5 → 0–100)
+//
+// ── On-time scoring (v2) ────────────────────────────────────────────────────
+//   No longer binary. Uses avgOnTimeScore from assignments.ts, which is the
+//   mean of per-assignment gradient scores based on hoursLate / deadlineHours.
+//   See assignments.ts for bracket definitions.
 //
 // ── Missing signal handling ─────────────────────────────────────────────────
 //   If a signal cannot be computed (no deadline projects, no ratings, etc.)
 //   its weight is redistributed proportionally across the remaining signals.
-//   This means a new worker with only 3 projects and no ratings still gets
-//   a fair score from the signals that do exist.
 //
 // ── Minimum data threshold ──────────────────────────────────────────────────
 //   Workers with fewer than MIN_ASSIGNMENTS_FOR_SCORE concluded assignments
-//   receive score=null and label="Unrated". Prevents punishing new workers
-//   with a bad score based on 1–2 projects.
+//   receive score=null and label="Unrated".
 
 import type { WorkerAssignmentStats } from "./assignments";
 
@@ -144,7 +146,7 @@ export function computeCommitmentIndex(
     cancellationRate,
     completionRate,
     onTimeEligible,
-    onTimeRate,
+    avgOnTimeScore,
     revisionRate,
     avgRating,
   } = stats;
@@ -179,11 +181,11 @@ export function computeCommitmentIndex(
   // 1) Completion rate — always available once we pass the unrated guard
   const completionScore = completionRate * 100;
 
-  // 2) On-time delivery — only if deadlines were actually set on some projects
-  const onTimeScore = onTimeEligible > 0 ? onTimeRate * 100 : null;
+  // 2) On-time delivery — gradient average; null if no deadline projects
+  //    avgOnTimeScore is already 0–100 from assignments.ts
+  const onTimeScore = onTimeEligible > 0 ? (avgOnTimeScore ?? 0) : null;
 
   // 3) Revision rate — invert so fewer revisions = higher score
-  //    Only available when there are completed projects (guaranteed here)
   const revisionScore = completed > 0 ? (1 - revisionRate) * 100 : null;
 
   // 4) BD rating — only if at least one project was rated

@@ -59,7 +59,7 @@ function label(s: ProjectStatus) {
   return s.replace(/_/g, " ");
 }
 
-// “COMPLETED only from DELIVERED”
+// "COMPLETED only from DELIVERED"
 function isAllowedTransition(from: ProjectStatus, to: ProjectStatus): boolean {
   if (from === to) return true;
 
@@ -101,6 +101,9 @@ export async function setProjectStatus(args: {
   projectId: string;
   nextStatus: ProjectStatus;
   note?: string;
+  /** Per-worker lateness set by manager at completion time.
+   *  hoursLate = 0 means on time. Stored on ProjectAssignment for commitment scoring. */
+  workerLateness?: { userId: string; hoursLate: number }[];
 }) {
   await requireRole([
     "SUPER_ADMIN",
@@ -195,10 +198,10 @@ export async function setProjectStatus(args: {
     const now = new Date();
 
     const activeAssignments = await tx.projectAssignment.findMany({
-  where: { projectId, unassignedAt: null },
-  select: { userId: true, outcome: true },
-  orderBy: { assignedAt: "asc" },
-});
+      where: { projectId, unassignedAt: null },
+      select: { userId: true, outcome: true },
+      orderBy: { assignedAt: "asc" },
+    });
     const activeUserIds = activeAssignments.map((a) => a.userId);
     const hasActiveAssignments = activeUserIds.length > 0;
 
@@ -240,34 +243,49 @@ export async function setProjectStatus(args: {
       data: {
         status: nextStatus,
         statusChangedAt: now,
-        cancelledAt: nextStatus === "CANCELLED" ? now : null, // clears when un-cancelling
+        cancelledAt: nextStatus === "CANCELLED" ? now : null,
         ...timerPatch,
         ...completionPatch,
       },
     });
 
     // ==========================
-// ASSIGNMENT OUTCOME ENGINE (standalone)
-// Rule:
-// - When project becomes COMPLETED: only active (unassignedAt=null) assignments become COMPLETED
-// - CANCELLED assignments remain CANCELLED forever
-// - This does NOT affect Project.status and does not reopen outcomes
-// ==========================
-if (nextStatus === "COMPLETED") {
-  await tx.projectAssignment.updateMany({
-    where: {
-      projectId,
-      unassignedAt: null,
-      // do NOT overwrite cancelled-for-worker assignments
-      outcome: { not: "CANCELLED" as any },
-    } as any,
-    data: {
-      outcome: "COMPLETED" as any,
-      // set once; safe if column exists + already set
-      completedAt: now,
-    } as any,
-  });
-}
+    // ASSIGNMENT OUTCOME ENGINE (standalone)
+    // Rule:
+    // - When project becomes COMPLETED: only active (unassignedAt=null) assignments become COMPLETED
+    // - CANCELLED assignments remain CANCELLED forever
+    // - This does NOT affect Project.status and does not reopen outcomes
+    // ==========================
+    if (nextStatus === "COMPLETED") {
+      await tx.projectAssignment.updateMany({
+        where: {
+          projectId,
+          unassignedAt: null,
+          // do NOT overwrite cancelled-for-worker assignments
+          outcome: { not: "CANCELLED" as any },
+        } as any,
+        data: {
+          outcome: "COMPLETED" as any,
+          completedAt: now,
+        } as any,
+      });
+
+      // Save per-worker lateness from manager input at completion time.
+      // hoursLate = 0 means on time; >0 means late by N hours.
+      // null (not set) means auto-calc from timer will be used in scoring.
+      if (args.workerLateness && args.workerLateness.length > 0) {
+        for (const { userId: wId, hoursLate } of args.workerLateness) {
+          await tx.projectAssignment.updateMany({
+            where: {
+              projectId,
+              userId: wId,
+              unassignedAt: null,
+            },
+            data: { hoursLate } as any,
+          });
+        }
+      }
+    }
 
     // ==========================
     // PAYMENTS
