@@ -2,7 +2,13 @@
 import { redirect } from "next/navigation";
 import { readSession } from "@/lib/auth";
 import { getPrisma } from "@/lib/prisma";
-import { createMonth, finalizeMonth, updateMonth } from "./actions";
+import {
+  createMonth,
+  finalizeMonth,
+  unfinalizeMonth,
+  recalculateMonth,
+  updateMonth,
+} from "./actions";
 
 const prisma = getPrisma();
 
@@ -33,7 +39,7 @@ function nowMonthKeyUTC() {
 export default async function FinanceConfigPage({
   searchParams,
 }: {
-  searchParams: { monthKey?: string; err?: string; ok?: string };
+  searchParams: { monthKey?: string; err?: string; ok?: string; msg?: string };
 }) {
   const { user } = await readSession();
   requireSuperAdmin(user?.role);
@@ -46,7 +52,14 @@ export default async function FinanceConfigPage({
   const row = all.find((x) => x.monthKey === selected) ?? null;
 
   const err = searchParams.err ? decodeURIComponent(searchParams.err) : null;
-  const ok = searchParams.ok ? "Saved." : null;
+  // Custom msg takes priority; fallback to generic "Saved."
+  const okMsg = searchParams.ok
+    ? searchParams.msg
+      ? decodeURIComponent(searchParams.msg)
+      : "Saved."
+    : null;
+
+  const isFinalized = !!row?.finalizedAt;
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-10 space-y-6">
@@ -63,9 +76,9 @@ export default async function FinanceConfigPage({
         </div>
       ) : null}
 
-      {ok ? (
+      {okMsg ? (
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
-          {ok}
+          {okMsg}
         </div>
       ) : null}
 
@@ -123,13 +136,14 @@ export default async function FinanceConfigPage({
 
         {/* Right: editor */}
         <div className="md:col-span-2 rounded-2xl border bg-card p-4 space-y-4">
+          {/* Header row: title + action buttons */}
           <div className="flex items-start justify-between gap-4">
             <div>
               <div className="text-sm font-medium">Selected month</div>
               <div className="text-lg font-semibold">{selected}</div>
               <div className="text-xs text-muted-foreground">
                 Status:{" "}
-                {row?.finalizedAt ? (
+                {isFinalized ? (
                   <span className="text-emerald-700">Finalized (locked)</span>
                 ) : (
                   <span>Draft (editable)</span>
@@ -137,19 +151,74 @@ export default async function FinanceConfigPage({
               </div>
             </div>
 
-            {row && !row.finalizedAt ? (
-              <form action={finalizeMonth}>
-                <input type="hidden" name="monthKey" value={selected} />
-                <button className="rounded-xl bg-primary text-primary-foreground px-4 py-2 text-sm hover:bg-primary/90 transition-colors">
-                  Finalize (Lock)
-                </button>
-              </form>
-            ) : null}
+            {row && (
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                {/* Finalize — only when not yet locked */}
+                {!isFinalized && (
+                  <form action={finalizeMonth}>
+                    <input type="hidden" name="monthKey" value={selected} />
+                    <button className="rounded-xl bg-primary text-primary-foreground px-4 py-2 text-sm hover:bg-primary/90 transition-colors">
+                      Finalize (Lock)
+                    </button>
+                  </form>
+                )}
+
+                {/* Unfinalize — only when locked */}
+                {isFinalized && (
+                  <form
+                    action={unfinalizeMonth}
+                    onSubmit={(e) => {
+                      if (
+                        !confirm(
+                          `Unlock ${selected}? You can edit values and re-finalize after.`
+                        )
+                      )
+                        e.preventDefault();
+                    }}
+                  >
+                    <input type="hidden" name="monthKey" value={selected} />
+                    <button className="rounded-xl border border-amber-400 text-amber-700 bg-amber-50 px-4 py-2 text-sm hover:bg-amber-100 transition-colors">
+                      Unfinalize (Unlock)
+                    </button>
+                  </form>
+                )}
+
+                {/* Recalculate — always available when row exists */}
+                <form
+                  action={recalculateMonth}
+                  onSubmit={(e) => {
+                    if (
+                      !confirm(
+                        `Recalculate all BD commission rows for ${selected}?\n\nThis re-runs the commission formula for every project that completed this month using the current config values.\n\nAlready-PAID rows are skipped.`
+                      )
+                    )
+                      e.preventDefault();
+                  }}
+                >
+                  <input type="hidden" name="monthKey" value={selected} />
+                  <button className="rounded-xl border border-sky-400 text-sky-700 bg-sky-50 px-4 py-2 text-sm hover:bg-sky-100 transition-colors">
+                    Recalculate
+                  </button>
+                </form>
+              </div>
+            )}
           </div>
+
+          {/* ── Finalized banner ── */}
+          {isFinalized && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 space-y-1">
+              <div className="font-medium">This month is finalized.</div>
+              <div>
+                To correct values: click <strong>Unfinalize (Unlock)</strong> → edit → save →
+                click <strong>Recalculate</strong> to push updated figures to all BD commission
+                rows → re-<strong>Finalize</strong>.
+              </div>
+            </div>
+          )}
 
           {!row ? (
             <div className="rounded-xl border bg-muted/30 p-4 text-sm">
-              This month doesn’t exist yet. Use “Create / open month” to create it.
+              This month doesn&apos;t exist yet. Use "Create / open month" to create it.
             </div>
           ) : (
             <form action={updateMonth} className="space-y-4">
@@ -161,7 +230,7 @@ export default async function FinanceConfigPage({
                   <input
                     name="fxRate"
                     defaultValue={fmtFx(row.fxRate)}
-                    disabled={!!row.finalizedAt}
+                    disabled={isFinalized}
                     className="w-full rounded-xl border bg-background px-3 py-2 text-sm disabled:opacity-60"
                     placeholder="e.g. 280.0000"
                   />
@@ -172,7 +241,7 @@ export default async function FinanceConfigPage({
                   <input
                     name="avgOnsiteHourCostPkr"
                     defaultValue={row.avgOnsiteHourCostPkr ?? ""}
-                    disabled={!!row.finalizedAt}
+                    disabled={isFinalized}
                     className="w-full rounded-xl border bg-background px-3 py-2 text-sm disabled:opacity-60"
                     placeholder="e.g. 1500"
                   />
@@ -183,7 +252,7 @@ export default async function FinanceConfigPage({
                   <input
                     name="remoteOverheadFixedPkr"
                     defaultValue={row.remoteOverheadFixedPkr ?? ""}
-                    disabled={!!row.finalizedAt}
+                    disabled={isFinalized}
                     className="w-full rounded-xl border bg-background px-3 py-2 text-sm disabled:opacity-60"
                     placeholder="e.g. 250000"
                   />
@@ -194,7 +263,7 @@ export default async function FinanceConfigPage({
                   <textarea
                     name="notes"
                     defaultValue={safeStr(row.notes ?? "")}
-                    disabled={!!row.finalizedAt}
+                    disabled={isFinalized}
                     className="min-h-[90px] w-full rounded-xl border bg-background px-3 py-2 text-sm disabled:opacity-60"
                     placeholder="Optional notes..."
                   />
@@ -203,11 +272,13 @@ export default async function FinanceConfigPage({
 
               <div className="flex items-center justify-between">
                 <div className="text-xs text-muted-foreground">
-                  {row.finalizedAt ? "This month is locked and cannot be edited." : "Edits allowed until finalized."}
+                  {isFinalized
+                    ? "Unlock the month to edit values."
+                    : "Edits allowed until finalized."}
                 </div>
 
                 <button
-                  disabled={!!row.finalizedAt}
+                  disabled={isFinalized}
                   className="rounded-xl border px-4 py-2 text-sm hover:bg-muted disabled:opacity-60"
                 >
                   Save
