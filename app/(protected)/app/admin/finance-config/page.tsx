@@ -2,13 +2,8 @@
 import { redirect } from "next/navigation";
 import { readSession } from "@/lib/auth";
 import { getPrisma } from "@/lib/prisma";
-import {
-  createMonth,
-  finalizeMonth,
-  unfinalizeMonth,
-  recalculateMonth,
-  updateMonth,
-} from "./actions";
+import { createMonth, finalizeMonth, updateMonth } from "./actions";
+import { UnfinalizeButton, RecalculateButton } from "./month-action-buttons";
 
 const prisma = getPrisma();
 
@@ -164,42 +159,10 @@ export default async function FinanceConfigPage({
                 )}
 
                 {/* Unfinalize — only when locked */}
-                {isFinalized && (
-                  <form
-                    action={unfinalizeMonth}
-                    onSubmit={(e) => {
-                      if (
-                        !confirm(
-                          `Unlock ${selected}? You can edit values and re-finalize after.`
-                        )
-                      )
-                        e.preventDefault();
-                    }}
-                  >
-                    <input type="hidden" name="monthKey" value={selected} />
-                    <button className="rounded-xl border border-amber-400 text-amber-700 bg-amber-50 px-4 py-2 text-sm hover:bg-amber-100 transition-colors">
-                      Unfinalize (Unlock)
-                    </button>
-                  </form>
-                )}
+                {isFinalized && <UnfinalizeButton monthKey={selected} />}
 
                 {/* Recalculate — always available when row exists */}
-                <form
-                  action={recalculateMonth}
-                  onSubmit={(e) => {
-                    if (
-                      !confirm(
-                        `Recalculate all BD commission rows for ${selected}?\n\nThis re-runs the commission formula for every project that completed this month using the current config values.\n\nAlready-PAID rows are skipped.`
-                      )
-                    )
-                      e.preventDefault();
-                  }}
-                >
-                  <input type="hidden" name="monthKey" value={selected} />
-                  <button className="rounded-xl border border-sky-400 text-sky-700 bg-sky-50 px-4 py-2 text-sm hover:bg-sky-100 transition-colors">
-                    Recalculate
-                  </button>
-                </form>
+                <RecalculateButton monthKey={selected} />
               </div>
             )}
           </div>
