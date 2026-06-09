@@ -77,6 +77,9 @@ const CreateProjectSchema = z.object({
   // Finance fields
   portal: z.enum(["UPWORK", "FIVERR", "DIRECT", "OTHER"], { message: "Invalid portal" }),
 
+  // Sample flag
+  isSample: z.boolean().optional().default(false),
+
   // Decimals parsed separately
   priceUsdRaw: z.any(),
   platformFeePercentRaw: z.any(),
@@ -99,6 +102,8 @@ export async function createProject(formData: FormData) {
     clientUsername: formData.get("clientUsername"),
 
     portal: formData.get("portal"),
+
+    isSample: formData.get("isSample") === "true",
 
     priceUsdRaw: formData.get("priceUsd"),
     platformFeePercentRaw: formData.get("platformFeePercent"),
@@ -132,8 +137,11 @@ export async function createProject(formData: FormData) {
       ? parsed.data.clientUsername.trim()
       : null;
 
-  // ✅ Required USD price
-  const priceUsd = parseUsdRequired(parsed.data.priceUsdRaw, "Price (USD)");
+  // ✅ Required USD price — samples are allowed price 0
+  const isSample = parsed.data.isSample ?? false;
+  const priceUsd = isSample
+    ? new Prisma.Decimal("0.00")
+    : parseUsdRequired(parsed.data.priceUsdRaw, "Price (USD)");
 
   // ✅ Percent (0..100)
  const platformFeePercent =
@@ -154,6 +162,7 @@ export async function createProject(formData: FormData) {
         deadlineHours: parsed.data.deadlineHours,
         createdById: actorId,
         bdOwnerId,
+        isSample,
       },
       select: { id: true, title: true, departmentId: true },
     });

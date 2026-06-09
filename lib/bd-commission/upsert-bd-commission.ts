@@ -112,6 +112,8 @@ export async function upsertBdCommissionForProject(projectId: string) {
     if (!project?.firstCompletedAt) return;
     if (!project.finance) return;
     if (!project.bdOwnerId) return;
+    // Skip sample projects — no BD commission, no financial tracking
+    if ((project as any).isSample) return;
 
     // 2) Month + config
     const completedMonthKey = monthKeyFromDate(project.firstCompletedAt);
@@ -254,6 +256,7 @@ export async function upsertBdCommissionForProject(projectId: string) {
         netPkr,
 
         overheadPkr,
+        workerPayoutPkr,
         profitPkr,
 
         bdPayoutPkr,
@@ -285,6 +288,7 @@ export async function upsertBdCommissionForProject(projectId: string) {
         netPkr,
 
         overheadPkr,
+        workerPayoutPkr,
         profitPkr,
 
         bdPayoutPkr,

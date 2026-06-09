@@ -287,6 +287,7 @@ export async function assignWorkerToProject(input: z.infer<typeof AssignSchema>)
       timerRunning: true,
       firstCompletedAt: true,
       remotePrice: true, // legacy
+      isSample: true,
     },
   });
   if (!project) redirect("/app/projects?err=project_not_found");
@@ -365,8 +366,8 @@ export async function assignWorkerToProject(input: z.infer<typeof AssignSchema>)
       });
     }
 
-    // payment line logic (remote only)
-    if (isRemote && money) {
+    // payment line logic (remote only, skipped for sample projects)
+    if (isRemote && money && !project.isSample) {
       const payableOn = project.firstCompletedAt
         ? payableOnFrom(project.firstCompletedAt)
         : payableOnPlaceholder();

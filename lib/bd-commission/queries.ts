@@ -249,6 +249,7 @@ export async function getBdCommissionLedger(params: {
         netUsd: true,
         netPkr: true,
         overheadPkr: true,
+        workerPayoutPkr: true,
         profitPkr: true,
         bdPayoutPkr: true,
         companySharePkr: true,

@@ -40,6 +40,7 @@ export default function NewProjectForm({ departments }: { departments: Departmen
 
   const [portal, setPortal] = React.useState<Portal>("UPWORK");
   const [priceUsd, setPriceUsd] = React.useState("");
+  const [isSample, setIsSample] = React.useState(false);
 
   // percent-based
   const [feePreset, setFeePreset] = React.useState<FeePreset>("UPWORK_10P");
@@ -72,6 +73,7 @@ export default function NewProjectForm({ departments }: { departments: Departmen
       {/* Hidden inputs for Select/state-driven fields */}
       <input type="hidden" name="departmentId" value={departmentId} />
       <input type="hidden" name="portal" value={portal} />
+      <input type="hidden" name="isSample" value={String(isSample)} />
       {/* ✅ store percent in DB */}
       <input type="hidden" name="platformFeePercent" value={platformFeePercent} />
 
@@ -147,81 +149,97 @@ export default function NewProjectForm({ departments }: { departments: Departmen
           </div>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Portal</label>
-            <Select value={portal} onValueChange={(v) => setPortal(v as Portal)}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select portal" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="UPWORK">Upwork</SelectItem>
-                <SelectItem value="FIVERR">Fiverr</SelectItem>
-                <SelectItem value="DIRECT">Direct</SelectItem>
-                <SelectItem value="OTHER">Other</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+        {/* Sample toggle */}
+        <label className="flex items-center gap-3 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={isSample}
+            onChange={(e) => setIsSample(e.target.checked)}
+            className="h-4 w-4 rounded border accent-red-700"
+          />
+          <span className="text-sm font-medium">This is a sample / unpaid project</span>
+          <span className="text-xs text-muted-foreground">
+            No price, no BD commission, no worker payment lines.
+          </span>
+        </label>
 
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Price (USD) *</label>
-            <Input
-              name="priceUsd"
-              inputMode="decimal"
-              value={priceUsd}
-              onChange={(e) => setPriceUsd(e.target.value)}
-              placeholder="e.g., 250"
-            />
-            <p className="text-xs text-muted-foreground">Required.</p>
-          </div>
-        </div>
+        {!isSample && (
+          <div className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Portal</label>
+                <Select value={portal} onValueChange={(v) => setPortal(v as Portal)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select portal" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="UPWORK">Upwork</SelectItem>
+                    <SelectItem value="FIVERR">Fiverr</SelectItem>
+                    <SelectItem value="DIRECT">Direct</SelectItem>
+                    <SelectItem value="OTHER">Other</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Platform fee</label>
-            <Select value={feePreset} onValueChange={(v) => setFeePreset(v as FeePreset)}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select platform fee" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="UPWORK_10P">Upwork (10%)</SelectItem>
-                <SelectItem value="FIVERR_20P">Fiverr (20%)</SelectItem>
-                <SelectItem value="DIRECT_5P">Direct (5%)</SelectItem>
-                <SelectItem value="CUSTOM">Custom (%)</SelectItem>
-              </SelectContent>
-            </Select>
-
-            <p className="text-xs text-muted-foreground">
-              Stored as a percentage (e.g., 20.00).
-            </p>
-          </div>
-
-          {feePreset === "CUSTOM" ? (
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Custom platform fee (%)</label>
-              <Input
-                inputMode="decimal"
-                value={customFeePercent}
-                onChange={(e) => setCustomFeePercent(e.target.value)}
-                placeholder="e.g., 20"
-              />
-              <p className="text-xs text-muted-foreground">0 to 100.</p>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Price (USD) *</label>
+                <Input
+                  name="priceUsd"
+                  inputMode="decimal"
+                  value={priceUsd}
+                  onChange={(e) => setPriceUsd(e.target.value)}
+                  placeholder="e.g., 250"
+                />
+                <p className="text-xs text-muted-foreground">Required.</p>
+              </div>
             </div>
-          ) : (
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Computed fee (USD)</label>
-              <Input value={computedFeeUsd || "—"} readOnly />
-              <p className="text-xs text-muted-foreground">
-                Based on Price × Fee%.
-              </p>
-            </div>
-          )}
-        </div>
 
-        {/* Optional: show actual stored percent always */}
-        <div className="text-xs text-muted-foreground">
-          Stored fee%: <span className="font-medium">{platformFeePercent || "—"}</span>
-        </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Platform fee</label>
+                <Select value={feePreset} onValueChange={(v) => setFeePreset(v as FeePreset)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select platform fee" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="UPWORK_10P">Upwork (10%)</SelectItem>
+                    <SelectItem value="FIVERR_20P">Fiverr (20%)</SelectItem>
+                    <SelectItem value="DIRECT_5P">Direct (5%)</SelectItem>
+                    <SelectItem value="CUSTOM">Custom (%)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Stored as a percentage (e.g., 20.00).
+                </p>
+              </div>
+
+              {feePreset === "CUSTOM" ? (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Custom platform fee (%)</label>
+                  <Input
+                    inputMode="decimal"
+                    value={customFeePercent}
+                    onChange={(e) => setCustomFeePercent(e.target.value)}
+                    placeholder="e.g., 20"
+                  />
+                  <p className="text-xs text-muted-foreground">0 to 100.</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Computed fee (USD)</label>
+                  <Input value={computedFeeUsd || "—"} readOnly />
+                  <p className="text-xs text-muted-foreground">
+                    Based on Price × Fee%.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="text-xs text-muted-foreground">
+              Stored fee%: <span className="font-medium">{platformFeePercent || "—"}</span>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="space-y-2">

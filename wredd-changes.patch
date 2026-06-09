@@ -1,0 +1,440 @@
+diff --git a/app/(protected)/app/admin/bd-commission/page.tsx b/app/(protected)/app/admin/bd-commission/page.tsx
+index d13d02f..0bf5314 100644
+--- a/app/(protected)/app/admin/bd-commission/page.tsx
++++ b/app/(protected)/app/admin/bd-commission/page.tsx
+@@ -155,10 +155,23 @@ function feeUsdFrom(priceUsdRaw: any, feePercentRaw: any, feeUsdRaw: any) {
+   return { price, pct, feeUsd };
+ }
+ 
+-function fmtOnsiteEffort(hoursRaw: any) {
++function fmtOnsiteEffort(hoursRaw: any, costPkrRaw?: any) {
+   const hours = Number(hoursRaw ?? 0);
+   if (!hours) return "—";
+-  return `${hours} hrs total`;
++  if (costPkrRaw != null) {
++    const cost = Number(costPkrRaw ?? 0);
++    if (cost > 0) return `${hours} hrs · ${fmtMoneyPkr(cost)}`;
++  }
++  return `${hours} hrs`;
++}
++
++function fmtRemoteSpent(overheadPkrRaw: any, workerPayoutPkrRaw: any) {
++  const overhead = Number(overheadPkrRaw ?? 0);
++  const workerPay = Number(workerPayoutPkrRaw ?? 0);
++  const total = overhead + workerPay;
++  if (!total && !overhead && !workerPay) return "—";
++  if (!workerPay) return fmtMoneyPkr(overhead); // legacy rows with no workerPayoutPkr
++  return `${fmtMoneyPkr(overhead)} + ${fmtMoneyPkr(workerPay)} = ${fmtMoneyPkr(total)}`;
+ }
+ 
+ // Server-action wrapper for <form action=...>
+@@ -584,7 +597,9 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
+             ) : tab === "ACTIVE" ? (
+               rows.map((r: any) => {
+                 const workType = r.finance?.workType;
+-               const effort = workType === "ONSITE" ? `${r.finance?.allowedHours ?? 0} hrs total` : "Remote overhead (fixed)";
++               const effort = workType === "ONSITE"
++                  ? fmtOnsiteEffort(r.finance?.allowedHours, null)
++                  : "Remote overhead (fixed)";
+ 
+                 const { pct, feeUsd } = feeUsdFrom(
+                   r.finance?.priceUsd,
+@@ -639,8 +654,8 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
+                 const spent = isAdj
+                   ? "-"
+                   : r.workType === "REMOTE"
+-                    ? fmtMoneyPkr(Number(r.overheadPkr ?? 0))
+-                    : fmtOnsiteEffort(r.allowedHours);
++                    ? fmtRemoteSpent(r.overheadPkr, r.workerPayoutPkr)
++                    : fmtOnsiteEffort(r.allowedHours, r.overheadPkr);
+ 
+                 // prefer ledger snapshot fields, else fall back to project.finance if present
+                 const priceUsdRaw = isAdj ? null : (r.priceUsd ?? r.project?.finance?.priceUsd);
+diff --git a/app/(protected)/app/projects/[id]/actions/assignments.ts b/app/(protected)/app/projects/[id]/actions/assignments.ts
+index 5d6073d..74edb5a 100644
+--- a/app/(protected)/app/projects/[id]/actions/assignments.ts
++++ b/app/(protected)/app/projects/[id]/actions/assignments.ts
+@@ -287,6 +287,7 @@ export async function assignWorkerToProject(input: z.infer<typeof AssignSchema>)
+       timerRunning: true,
+       firstCompletedAt: true,
+       remotePrice: true, // legacy
++      isSample: true,
+     },
+   });
+   if (!project) redirect("/app/projects?err=project_not_found");
+@@ -365,8 +366,8 @@ export async function assignWorkerToProject(input: z.infer<typeof AssignSchema>)
+       });
+     }
+ 
+-    // payment line logic (remote only)
+-    if (isRemote && money) {
++    // payment line logic (remote only, skipped for sample projects)
++    if (isRemote && money && !project.isSample) {
+       const payableOn = project.firstCompletedAt
+         ? payableOnFrom(project.firstCompletedAt)
+         : payableOnPlaceholder();
+diff --git a/app/(protected)/app/projects/[id]/actions/status.ts b/app/(protected)/app/projects/[id]/actions/status.ts
+index 625391e..b85a1e0 100644
+--- a/app/(protected)/app/projects/[id]/actions/status.ts
++++ b/app/(protected)/app/projects/[id]/actions/status.ts
+@@ -191,6 +191,7 @@ export async function setProjectStatus(args: {
+         timerRunning: true,
+         timerLastResumedAt: true,
+         timerAccumulatedSeconds: true,
++        isSample: true,
+       },
+     });
+     if (!fresh) backWithError(projectId, "Project not found.");
+@@ -300,7 +301,8 @@ export async function setProjectStatus(args: {
+     }
+ 
+     // B) On first completion: set payableOn to pay date (10th next month)
+-    if (isFirstCompletion) {
++    // Skipped entirely for sample projects — no payment lines created or updated
++    if (isFirstCompletion && !fresh.isSample) {
+       const payableOn = payableOnFrom(completionAt ?? now);
+ 
+       if (activeUserIds.length) {
+diff --git a/app/(protected)/app/projects/[id]/page.tsx b/app/(protected)/app/projects/[id]/page.tsx
+index 181f029..58af191 100644
+--- a/app/(protected)/app/projects/[id]/page.tsx
++++ b/app/(protected)/app/projects/[id]/page.tsx
+@@ -154,6 +154,7 @@ export default async function ProjectPage({ params }: { params: { id: string } }
+       description: true,
+ 
+       status: true,
++      isSample: true,
+       deadlineHours: true,
+ 
+       timerRunning: true,
+@@ -454,7 +455,12 @@ export default async function ProjectPage({ params }: { params: { id: string } }
+           <div className="min-w-0">
+             <h1 className="text-xl font-semibold">{project.title}</h1>
+             <p className="mt-1 text-sm text-muted-foreground">
+-              {project.department.name} • {project.status} • {project.deadlineHours}h
++              {project.department.name} • {project.status} • {project.deadlineHours}h
++              {(project as any).isSample && (
++                <span className="ml-2 inline-flex items-center rounded px-1.5 py-0.5 text-xs font-semibold bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300">
++                  SAMPLE
++                </span>
++              )}
+             </p>
+ 
+             {showPriceBlock ? (
+@@ -551,22 +557,28 @@ deadlineHours={project.deadlineHours ?? null}
+             <div className="flex justify-between gap-4">
+               <span className="text-muted-foreground">Price (USD)</span>
+               <span className="font-medium">
+-                {(project as any).finance?.priceUsd ? fmtUSD((project as any).finance.priceUsd) : "—"}
++                {(project as any).isSample
++                  ? <span className="text-yellow-600 dark:text-yellow-400 font-semibold">Sample (unpaid)</span>
++                  : (project as any).finance?.priceUsd ? fmtUSD((project as any).finance.priceUsd) : "—"}
+               </span>
+             </div>
+ 
+-            {/* ✅ Correct fields */}
+-            <div className="flex justify-between gap-4">
+-              <span className="text-muted-foreground">Platform fee (%)</span>
+-              <span className="font-medium">
+-                {feePercent > 0 ? `${feePercent.toLocaleString(undefined, { maximumFractionDigits: 2 })}%` : "—"}
+-              </span>
+-            </div>
++            {!(project as any).isSample && (
++              <>
++                {/* ✅ Correct fields */}
++                <div className="flex justify-between gap-4">
++                  <span className="text-muted-foreground">Platform fee (%)</span>
++                  <span className="font-medium">
++                    {feePercent > 0 ? `${feePercent.toLocaleString(undefined, { maximumFractionDigits: 2 })}%` : "—"}
++                  </span>
++                </div>
+ 
+-            <div className="flex justify-between gap-4">
+-              <span className="text-muted-foreground">Platform fee (USD)</span>
+-              <span className="font-medium">{platformFeeUsd > 0 ? fmtUSD(platformFeeUsd) : "—"}</span>
+-            </div>
++                <div className="flex justify-between gap-4">
++                  <span className="text-muted-foreground">Platform fee (USD)</span>
++                  <span className="font-medium">{platformFeeUsd > 0 ? fmtUSD(platformFeeUsd) : "—"}</span>
++                </div>
++              </>
++            )}
+ 
+             {(project as any).finance?.workType === "ONSITE" ? (
+               <div className="flex justify-between gap-4">
+diff --git a/app/(protected)/app/projects/actions.ts b/app/(protected)/app/projects/actions.ts
+index 4cae4de..49d197a 100644
+--- a/app/(protected)/app/projects/actions.ts
++++ b/app/(protected)/app/projects/actions.ts
+@@ -77,6 +77,9 @@ const CreateProjectSchema = z.object({
+   // Finance fields
+   portal: z.enum(["UPWORK", "FIVERR", "DIRECT", "OTHER"], { message: "Invalid portal" }),
+ 
++  // Sample flag
++  isSample: z.boolean().optional().default(false),
++
+   // Decimals parsed separately
+   priceUsdRaw: z.any(),
+   platformFeePercentRaw: z.any(),
+@@ -100,6 +103,8 @@ export async function createProject(formData: FormData) {
+ 
+     portal: formData.get("portal"),
+ 
++    isSample: formData.get("isSample") === "true",
++
+     priceUsdRaw: formData.get("priceUsd"),
+     platformFeePercentRaw: formData.get("platformFeePercent"),
+   });
+@@ -132,8 +137,11 @@ export async function createProject(formData: FormData) {
+       ? parsed.data.clientUsername.trim()
+       : null;
+ 
+-  // ✅ Required USD price
+-  const priceUsd = parseUsdRequired(parsed.data.priceUsdRaw, "Price (USD)");
++  // ✅ Required USD price — samples are allowed price 0
++  const isSample = parsed.data.isSample ?? false;
++  const priceUsd = isSample
++    ? new Prisma.Decimal("0.00")
++    : parseUsdRequired(parsed.data.priceUsdRaw, "Price (USD)");
+ 
+   // ✅ Percent (0..100)
+  const platformFeePercent =
+@@ -154,6 +162,7 @@ export async function createProject(formData: FormData) {
+         deadlineHours: parsed.data.deadlineHours,
+         createdById: actorId,
+         bdOwnerId,
++        isSample,
+       },
+       select: { id: true, title: true, departmentId: true },
+     });
+diff --git a/app/(protected)/app/projects/new/new-project-form.tsx b/app/(protected)/app/projects/new/new-project-form.tsx
+index c7ad310..fb7ea24 100644
+--- a/app/(protected)/app/projects/new/new-project-form.tsx
++++ b/app/(protected)/app/projects/new/new-project-form.tsx
+@@ -40,6 +40,7 @@ export default function NewProjectForm({ departments }: { departments: Departmen
+ 
+   const [portal, setPortal] = React.useState<Portal>("UPWORK");
+   const [priceUsd, setPriceUsd] = React.useState("");
++  const [isSample, setIsSample] = React.useState(false);
+ 
+   // percent-based
+   const [feePreset, setFeePreset] = React.useState<FeePreset>("UPWORK_10P");
+@@ -72,6 +73,7 @@ export default function NewProjectForm({ departments }: { departments: Departmen
+       {/* Hidden inputs for Select/state-driven fields */}
+       <input type="hidden" name="departmentId" value={departmentId} />
+       <input type="hidden" name="portal" value={portal} />
++      <input type="hidden" name="isSample" value={String(isSample)} />
+       {/* ✅ store percent in DB */}
+       <input type="hidden" name="platformFeePercent" value={platformFeePercent} />
+ 
+@@ -147,81 +149,97 @@ export default function NewProjectForm({ departments }: { departments: Departmen
+           </div>
+         </div>
+ 
+-        <div className="grid gap-4 md:grid-cols-2">
+-          <div className="space-y-2">
+-            <label className="text-sm font-medium">Portal</label>
+-            <Select value={portal} onValueChange={(v) => setPortal(v as Portal)}>
+-              <SelectTrigger>
+-                <SelectValue placeholder="Select portal" />
+-              </SelectTrigger>
+-              <SelectContent>
+-                <SelectItem value="UPWORK">Upwork</SelectItem>
+-                <SelectItem value="FIVERR">Fiverr</SelectItem>
+-                <SelectItem value="DIRECT">Direct</SelectItem>
+-                <SelectItem value="OTHER">Other</SelectItem>
+-              </SelectContent>
+-            </Select>
+-          </div>
+-
+-          <div className="space-y-2">
+-            <label className="text-sm font-medium">Price (USD) *</label>
+-            <Input
+-              name="priceUsd"
+-              inputMode="decimal"
+-              value={priceUsd}
+-              onChange={(e) => setPriceUsd(e.target.value)}
+-              placeholder="e.g., 250"
+-            />
+-            <p className="text-xs text-muted-foreground">Required.</p>
+-          </div>
+-        </div>
+-
+-        <div className="grid gap-4 md:grid-cols-2">
+-          <div className="space-y-2">
+-            <label className="text-sm font-medium">Platform fee</label>
+-            <Select value={feePreset} onValueChange={(v) => setFeePreset(v as FeePreset)}>
+-              <SelectTrigger>
+-                <SelectValue placeholder="Select platform fee" />
+-              </SelectTrigger>
+-              <SelectContent>
+-                <SelectItem value="UPWORK_10P">Upwork (10%)</SelectItem>
+-                <SelectItem value="FIVERR_20P">Fiverr (20%)</SelectItem>
+-                <SelectItem value="DIRECT_5P">Direct (5%)</SelectItem>
+-                <SelectItem value="CUSTOM">Custom (%)</SelectItem>
+-              </SelectContent>
+-            </Select>
+-
+-            <p className="text-xs text-muted-foreground">
+-              Stored as a percentage (e.g., 20.00).
+-            </p>
+-          </div>
+-
+-          {feePreset === "CUSTOM" ? (
+-            <div className="space-y-2">
+-              <label className="text-sm font-medium">Custom platform fee (%)</label>
+-              <Input
+-                inputMode="decimal"
+-                value={customFeePercent}
+-                onChange={(e) => setCustomFeePercent(e.target.value)}
+-                placeholder="e.g., 20"
+-              />
+-              <p className="text-xs text-muted-foreground">0 to 100.</p>
++        {/* Sample toggle */}
++        <label className="flex items-center gap-3 cursor-pointer select-none">
++          <input
++            type="checkbox"
++            checked={isSample}
++            onChange={(e) => setIsSample(e.target.checked)}
++            className="h-4 w-4 rounded border accent-red-700"
++          />
++          <span className="text-sm font-medium">This is a sample / unpaid project</span>
++          <span className="text-xs text-muted-foreground">
++            No price, no BD commission, no worker payment lines.
++          </span>
++        </label>
++
++        {!isSample && (
++          <div className="space-y-4">
++            <div className="grid gap-4 md:grid-cols-2">
++              <div className="space-y-2">
++                <label className="text-sm font-medium">Portal</label>
++                <Select value={portal} onValueChange={(v) => setPortal(v as Portal)}>
++                  <SelectTrigger>
++                    <SelectValue placeholder="Select portal" />
++                  </SelectTrigger>
++                  <SelectContent>
++                    <SelectItem value="UPWORK">Upwork</SelectItem>
++                    <SelectItem value="FIVERR">Fiverr</SelectItem>
++                    <SelectItem value="DIRECT">Direct</SelectItem>
++                    <SelectItem value="OTHER">Other</SelectItem>
++                  </SelectContent>
++                </Select>
++              </div>
++
++              <div className="space-y-2">
++                <label className="text-sm font-medium">Price (USD) *</label>
++                <Input
++                  name="priceUsd"
++                  inputMode="decimal"
++                  value={priceUsd}
++                  onChange={(e) => setPriceUsd(e.target.value)}
++                  placeholder="e.g., 250"
++                />
++                <p className="text-xs text-muted-foreground">Required.</p>
++              </div>
+             </div>
+-          ) : (
+-            <div className="space-y-2">
+-              <label className="text-sm font-medium">Computed fee (USD)</label>
+-              <Input value={computedFeeUsd || "—"} readOnly />
+-              <p className="text-xs text-muted-foreground">
+-                Based on Price × Fee%.
+-              </p>
++
++            <div className="grid gap-4 md:grid-cols-2">
++              <div className="space-y-2">
++                <label className="text-sm font-medium">Platform fee</label>
++                <Select value={feePreset} onValueChange={(v) => setFeePreset(v as FeePreset)}>
++                  <SelectTrigger>
++                    <SelectValue placeholder="Select platform fee" />
++                  </SelectTrigger>
++                  <SelectContent>
++                    <SelectItem value="UPWORK_10P">Upwork (10%)</SelectItem>
++                    <SelectItem value="FIVERR_20P">Fiverr (20%)</SelectItem>
++                    <SelectItem value="DIRECT_5P">Direct (5%)</SelectItem>
++                    <SelectItem value="CUSTOM">Custom (%)</SelectItem>
++                  </SelectContent>
++                </Select>
++                <p className="text-xs text-muted-foreground">
++                  Stored as a percentage (e.g., 20.00).
++                </p>
++              </div>
++
++              {feePreset === "CUSTOM" ? (
++                <div className="space-y-2">
++                  <label className="text-sm font-medium">Custom platform fee (%)</label>
++                  <Input
++                    inputMode="decimal"
++                    value={customFeePercent}
++                    onChange={(e) => setCustomFeePercent(e.target.value)}
++                    placeholder="e.g., 20"
++                  />
++                  <p className="text-xs text-muted-foreground">0 to 100.</p>
++                </div>
++              ) : (
++                <div className="space-y-2">
++                  <label className="text-sm font-medium">Computed fee (USD)</label>
++                  <Input value={computedFeeUsd || "—"} readOnly />
++                  <p className="text-xs text-muted-foreground">
++                    Based on Price × Fee%.
++                  </p>
++                </div>
++              )}
+             </div>
+-          )}
+-        </div>
+ 
+-        {/* Optional: show actual stored percent always */}
+-        <div className="text-xs text-muted-foreground">
+-          Stored fee%: <span className="font-medium">{platformFeePercent || "—"}</span>
+-        </div>
++            <div className="text-xs text-muted-foreground">
++              Stored fee%: <span className="font-medium">{platformFeePercent || "—"}</span>
++            </div>
++          </div>
++        )}
+       </div>
+ 
+       <div className="space-y-2">
+diff --git a/lib/bd-commission/queries.ts b/lib/bd-commission/queries.ts
+index 996c128..e723977 100644
+--- a/lib/bd-commission/queries.ts
++++ b/lib/bd-commission/queries.ts
+@@ -249,6 +249,7 @@ export async function getBdCommissionLedger(params: {
+         netUsd: true,
+         netPkr: true,
+         overheadPkr: true,
++        workerPayoutPkr: true,
+         profitPkr: true,
+         bdPayoutPkr: true,
+         companySharePkr: true,
+diff --git a/lib/bd-commission/upsert-bd-commission.ts b/lib/bd-commission/upsert-bd-commission.ts
+index 5be5faa..c0ce39e 100644
+--- a/lib/bd-commission/upsert-bd-commission.ts
++++ b/lib/bd-commission/upsert-bd-commission.ts
+@@ -112,6 +112,8 @@ export async function upsertBdCommissionForProject(projectId: string) {
+     if (!project?.firstCompletedAt) return;
+     if (!project.finance) return;
+     if (!project.bdOwnerId) return;
++    // Skip sample projects — no BD commission, no financial tracking
++    if ((project as any).isSample) return;
+ 
+     // 2) Month + config
+     const completedMonthKey = monthKeyFromDate(project.firstCompletedAt);
+@@ -254,6 +256,7 @@ export async function upsertBdCommissionForProject(projectId: string) {
+         netPkr,
+ 
+         overheadPkr,
++        workerPayoutPkr,
+         profitPkr,
+ 
+         bdPayoutPkr,
+@@ -285,6 +288,7 @@ export async function upsertBdCommissionForProject(projectId: string) {
+         netPkr,
+ 
+         overheadPkr,
++        workerPayoutPkr,
+         profitPkr,
+ 
+         bdPayoutPkr,

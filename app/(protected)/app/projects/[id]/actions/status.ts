@@ -191,6 +191,7 @@ export async function setProjectStatus(args: {
         timerRunning: true,
         timerLastResumedAt: true,
         timerAccumulatedSeconds: true,
+        isSample: true,
       },
     });
     if (!fresh) backWithError(projectId, "Project not found.");
@@ -300,7 +301,8 @@ export async function setProjectStatus(args: {
     }
 
     // B) On first completion: set payableOn to pay date (10th next month)
-    if (isFirstCompletion) {
+    // Skipped entirely for sample projects — no payment lines created or updated
+    if (isFirstCompletion && !fresh.isSample) {
       const payableOn = payableOnFrom(completionAt ?? now);
 
       if (activeUserIds.length) {

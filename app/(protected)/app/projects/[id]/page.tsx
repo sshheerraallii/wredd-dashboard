@@ -154,6 +154,7 @@ export default async function ProjectPage({ params }: { params: { id: string } }
       description: true,
 
       status: true,
+      isSample: true,
       deadlineHours: true,
 
       timerRunning: true,
@@ -455,6 +456,11 @@ export default async function ProjectPage({ params }: { params: { id: string } }
             <h1 className="text-xl font-semibold">{project.title}</h1>
             <p className="mt-1 text-sm text-muted-foreground">
               {project.department.name} • {project.status} • {project.deadlineHours}h
+              {(project as any).isSample && (
+                <span className="ml-2 inline-flex items-center rounded px-1.5 py-0.5 text-xs font-semibold bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300">
+                  SAMPLE
+                </span>
+              )}
             </p>
 
             {showPriceBlock ? (
@@ -551,22 +557,28 @@ deadlineHours={project.deadlineHours ?? null}
             <div className="flex justify-between gap-4">
               <span className="text-muted-foreground">Price (USD)</span>
               <span className="font-medium">
-                {(project as any).finance?.priceUsd ? fmtUSD((project as any).finance.priceUsd) : "—"}
+                {(project as any).isSample
+                  ? <span className="text-yellow-600 dark:text-yellow-400 font-semibold">Sample (unpaid)</span>
+                  : (project as any).finance?.priceUsd ? fmtUSD((project as any).finance.priceUsd) : "—"}
               </span>
             </div>
 
-            {/* ✅ Correct fields */}
-            <div className="flex justify-between gap-4">
-              <span className="text-muted-foreground">Platform fee (%)</span>
-              <span className="font-medium">
-                {feePercent > 0 ? `${feePercent.toLocaleString(undefined, { maximumFractionDigits: 2 })}%` : "—"}
-              </span>
-            </div>
+            {!(project as any).isSample && (
+              <>
+                {/* ✅ Correct fields */}
+                <div className="flex justify-between gap-4">
+                  <span className="text-muted-foreground">Platform fee (%)</span>
+                  <span className="font-medium">
+                    {feePercent > 0 ? `${feePercent.toLocaleString(undefined, { maximumFractionDigits: 2 })}%` : "—"}
+                  </span>
+                </div>
 
-            <div className="flex justify-between gap-4">
-              <span className="text-muted-foreground">Platform fee (USD)</span>
-              <span className="font-medium">{platformFeeUsd > 0 ? fmtUSD(platformFeeUsd) : "—"}</span>
-            </div>
+                <div className="flex justify-between gap-4">
+                  <span className="text-muted-foreground">Platform fee (USD)</span>
+                  <span className="font-medium">{platformFeeUsd > 0 ? fmtUSD(platformFeeUsd) : "—"}</span>
+                </div>
+              </>
+            )}
 
             {(project as any).finance?.workType === "ONSITE" ? (
               <div className="flex justify-between gap-4">

@@ -155,10 +155,23 @@ function feeUsdFrom(priceUsdRaw: any, feePercentRaw: any, feeUsdRaw: any) {
   return { price, pct, feeUsd };
 }
 
-function fmtOnsiteEffort(hoursRaw: any) {
+function fmtOnsiteEffort(hoursRaw: any, costPkrRaw?: any) {
   const hours = Number(hoursRaw ?? 0);
   if (!hours) return "—";
-  return `${hours} hrs total`;
+  if (costPkrRaw != null) {
+    const cost = Number(costPkrRaw ?? 0);
+    if (cost > 0) return `${hours} hrs · ${fmtMoneyPkr(cost)}`;
+  }
+  return `${hours} hrs`;
+}
+
+function fmtRemoteSpent(overheadPkrRaw: any, workerPayoutPkrRaw: any) {
+  const overhead = Number(overheadPkrRaw ?? 0);
+  const workerPay = Number(workerPayoutPkrRaw ?? 0);
+  const total = overhead + workerPay;
+  if (!total && !overhead && !workerPay) return "—";
+  if (!workerPay) return fmtMoneyPkr(overhead); // legacy rows with no workerPayoutPkr
+  return `${fmtMoneyPkr(overhead)} + ${fmtMoneyPkr(workerPay)} = ${fmtMoneyPkr(total)}`;
 }
 
 // Server-action wrapper for <form action=...>
@@ -584,7 +597,9 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
             ) : tab === "ACTIVE" ? (
               rows.map((r: any) => {
                 const workType = r.finance?.workType;
-               const effort = workType === "ONSITE" ? `${r.finance?.allowedHours ?? 0} hrs total` : "Remote overhead (fixed)";
+               const effort = workType === "ONSITE"
+                  ? fmtOnsiteEffort(r.finance?.allowedHours, null)
+                  : "Remote overhead (fixed)";
 
                 const { pct, feeUsd } = feeUsdFrom(
                   r.finance?.priceUsd,
@@ -639,8 +654,8 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
                 const spent = isAdj
                   ? "-"
                   : r.workType === "REMOTE"
-                    ? fmtMoneyPkr(Number(r.overheadPkr ?? 0))
-                    : fmtOnsiteEffort(r.allowedHours);
+                    ? fmtRemoteSpent(r.overheadPkr, r.workerPayoutPkr)
+                    : fmtOnsiteEffort(r.allowedHours, r.overheadPkr);
 
                 // prefer ledger snapshot fields, else fall back to project.finance if present
                 const priceUsdRaw = isAdj ? null : (r.priceUsd ?? r.project?.finance?.priceUsd);

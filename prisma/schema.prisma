@@ -1,19 +1,572 @@
-// prisma/schema.prisma
-
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
-  // Prisma v7: connection URL is configured in prisma.config.ts
 }
 
-/**
- * =========================
- * ENUMS
- * =========================
- */
+model User {
+  id                        String                   @id @default(cuid())
+  fullName                  String
+  username                  String                   @unique
+  email                     String                   @unique
+  passwordHash              String
+  role                      Role
+  workerType                WorkerType?
+  archivedAt                DateTime?
+  createdAt                 DateTime                 @default(now())
+  updatedAt                 DateTime                 @updatedAt
+  targetMonthlyPoints       Int                      @default(0)
+  image                     String?
+  lastActiveAt              DateTime?
+  statusText                String?
+  avatarPath                String?
+  joinedAt                  DateTime                 @default(now())
+  bdCommissionRate          Decimal?                 @db.Decimal(5, 4)
+  onsiteHourRatePkr         Int?
+  bdCommissions             BdCommission[]           @relation("BdCommissionBd")
+  bdCommissionExceptionPaid BdCommission[]           @relation("BdCommissionExceptionPaidBy")
+  bdCommissionPaid          BdCommission[]           @relation("BdCommissionPaidBy")
+  bdAdjustments             BdCommissionAdjustment[]
+  createdBdAdjustments      BdCommissionAdjustment[] @relation("BdAdjustmentCreatedBy")
+  notifications             Notification[]           @relation("NotificationRecipient")
+  notificationDeliveries    NotificationDelivery[]   @relation("NotificationDeliveryRecipient")
+  notificationPreferences   NotificationPreference?
+  onsiteCreditsSetBy        OnsitePointCredit[]      @relation("OnsiteCreditSetBy")
+  onsiteCredits             OnsitePointCredit[]      @relation("OnsiteCreditUser")
+  onsiteRatedBy             OnsiteProjectRating[]    @relation("OnsiteRatedBy")
+  opsTasksAssigned          OpsTask[]                @relation("OpsTaskAssignee")
+  opsTasksCreated           OpsTask[]                @relation("OpsTaskCreatedBy")
+  opsTaskInstances          OpsTaskInstance[]        @relation("OpsTaskInstanceAssignee")
+  opsTasksExtended          OpsTaskInstance[]        @relation("OpsTaskInstanceExtendedBy")
+  opsTasksReopened          OpsTaskInstance[]        @relation("OpsTaskInstanceReopenedBy")
+  passwordResets            PasswordResetToken[]
+  bdOwnedProjects           Project[]                @relation("ProjectBdOwner")
+  createdProjects           Project[]                @relation("ProjectCreatedBy")
+  activities                ProjectActivity[]        @relation("ActivityActor")
+  assignedByLinks           ProjectAssignment[]      @relation("AssignmentAssignedBy")
+  assignments               ProjectAssignment[]      @relation("AssignmentUser")
+  projectLastSeen           ProjectLastSeen[]
+  messages                  ProjectMessage[]         @relation("MessageCreatedBy")
+  paymentMarkedByLogs       ProjectPaymentLine[]     @relation("PaymentMarkedBy")
+  paymentLines              ProjectPaymentLine[]     @relation("PaymentLineUser")
+  ratingsGiven              ProjectRating[]          @relation("ProjectRatedBy")
+  watchedProjects           ProjectWatcher[]
+  departments               UserDepartment[]
+  invitesCreated            UserInvite[]             @relation("InviteCreatedBy")
+
+  @@index([role])
+  @@index([workerType])
+  @@index([email])
+  @@index([joinedAt])
+  @@index([bdCommissionRate])
+}
+
+model MonthlyFinanceConfig {
+  id                     String    @id @default(cuid())
+  monthKey               String    @unique
+  fxRate                 Decimal   @db.Decimal(12, 4)
+  avgOnsiteHourCostPkr   Int
+  remoteOverheadFixedPkr Int
+  finalizedAt            DateTime?
+  notes                  String?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  @@index([monthKey])
+  @@index([finalizedAt])
+}
+
+model Department {
+  id                String                 @id @default(cuid())
+  name              String                 @unique
+  slug              String                 @unique
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  projects          Project[]
+  users             UserDepartment[]
+  inviteDepartments UserInviteDepartment[]
+}
+
+model UserDepartment {
+  userId       String
+  departmentId String
+  createdAt    DateTime   @default(now())
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, departmentId])
+  @@index([departmentId])
+}
+
+model ProjectClassDefinition {
+  id         String       @id @default(cuid())
+  class      ProjectClass @unique
+  basePoints Int
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+  projects   Project[]
+}
+
+model Project {
+  id                               String                  @id @default(cuid())
+  title                            String
+  description                      String?
+  departmentId                     String
+  status                           ProjectStatus           @default(UNASSIGNED)
+  /// *
+  ///    * ---- Deadline + Timer (V1 final) ----
+  deadlineHours                    Int                     @default(0)
+  timerRunning                     Boolean                 @default(false)
+  timerLastResumedAt               DateTime?
+  timerAccumulatedSeconds          Int                     @default(0)
+  classBasePointsAtFirstCompletion Int?
+  /// *
+  ///    * ---- Remote (V1) ----
+  remotePrice                      Decimal?
+  /// *
+  ///    * ---- Immutable first completion ----
+  firstCompletedAt                 DateTime?
+  /// *
+  ///    * ---- Creator ----
+  createdById                      String
+  createdAt                        DateTime                @default(now())
+  updatedAt                        DateTime                @updatedAt
+  extraPoints                      Int?
+  /// *
+  ///    * ---- Onsite (V1) ----
+  onsitePointsManual               Int?
+  projectClassDefinitionId         String?
+  /// *
+  ///    * ---- Status timestamps (NEW) ----
+  ///    * cancelledAt: set exactly when status becomes CANCELLED
+  ///    * statusChangedAt: set on every status change (useful for audits/analytics)
+  cancelledAt                      DateTime?
+  statusChangedAt                  DateTime?
+  /// *
+  ///    * ---- BD ownership (Mini-Step 3) ----
+  bdOwnerId                        String?
+  isSample                         Boolean                 @default(false)
+  bdCommissions                    BdCommission[]          @relation("BdCommissionProject")
+  onsiteCredits                    OnsitePointCredit[]
+  onsiteRating                     OnsiteProjectRating?
+  bdOwner                          User?                   @relation("ProjectBdOwner", fields: [bdOwnerId], references: [id])
+  createdBy                        User                    @relation("ProjectCreatedBy", fields: [createdById], references: [id])
+  department                       Department              @relation(fields: [departmentId], references: [id])
+  projectClassDefinition           ProjectClassDefinition? @relation(fields: [projectClassDefinitionId], references: [id])
+  activities                       ProjectActivity[]
+  assignments                      ProjectAssignment[]
+  finance                          ProjectFinance?
+  lastSeenBy                       ProjectLastSeen[]
+  messages                         ProjectMessage[]
+  paymentLines                     ProjectPaymentLine[]
+  rating                           ProjectRating?
+  watchers                         ProjectWatcher[]
+
+  @@index([departmentId])
+  @@index([status])
+  @@index([createdById])
+  @@index([bdOwnerId])
+  @@index([cancelledAt])
+  @@index([statusChangedAt])
+}
+
+model ProjectFinance {
+  id                 String        @id @default(cuid())
+  projectId          String        @unique
+  clientName         String?
+  clientUsername     String?
+  workType           WorkType      @default(REMOTE)
+  portal             ProjectPortal @default(OTHER)
+  priceUsd           Decimal       @default(0) @db.Decimal(12, 2)
+  platformFeeUsd     Decimal?      @db.Decimal(12, 2)
+  allowedHours       Int?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+  platformFeePercent Decimal?      @db.Decimal(5, 2)
+  project            Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([portal])
+  @@index([workType])
+}
+
+model BdCommissionAdjustment {
+  id          String          @id @default(cuid())
+  bdUserId    String
+  monthKey    String
+  tab         BdCommissionTab
+  amountPkr   Decimal         @db.Decimal(14, 2)
+  note        String
+  dueOn       DateTime
+  paidAt      DateTime?
+  createdById String
+  createdAt   DateTime        @default(now())
+  bdUser      User            @relation(fields: [bdUserId], references: [id], onDelete: Cascade)
+  createdBy   User            @relation("BdAdjustmentCreatedBy", fields: [createdById], references: [id])
+
+  @@index([bdUserId, monthKey])
+  @@index([tab, dueOn])
+}
+
+model BdCommission {
+  id                     String          @id @default(cuid())
+  projectId              String
+  bdId                   String
+  completedMonthKey      String
+  tab                    BdCommissionTab @default(ACTIVE)
+  dueOn                  DateTime
+  payableOn              DateTime
+  workType               WorkType
+  portal                 ProjectPortal
+  priceUsd               Decimal         @db.Decimal(12, 2)
+  platformFeeUsd         Decimal         @db.Decimal(12, 2)
+  fxRate                 Decimal         @db.Decimal(12, 4)
+  avgOnsiteHourCostPkr   Int
+  remoteOverheadFixedPkr Int
+  allowedHours           Int?
+  bdRate                 Decimal         @db.Decimal(5, 4)
+  netUsd                 Decimal         @db.Decimal(12, 2)
+  netPkr                 Decimal         @db.Decimal(14, 2)
+  overheadPkr            Decimal         @db.Decimal(14, 2)
+  profitPkr              Decimal         @db.Decimal(14, 2)
+  bdPayoutPkr            Decimal         @db.Decimal(14, 2)
+  companySharePkr        Decimal         @db.Decimal(14, 2)
+  createdAt              DateTime        @default(now())
+  updatedAt              DateTime        @updatedAt
+  exceptionPaidAt        DateTime?
+  exceptionPaidById      String?
+  exceptionPaidNote      String?
+  paidAt                 DateTime?
+  paidById               String?
+  paidNote               String?
+  platformFeePercent     Decimal?        @db.Decimal(5, 2)
+  workerPayoutPkr        Decimal         @default(0) @db.Decimal(14, 2)
+  bd                     User            @relation("BdCommissionBd", fields: [bdId], references: [id])
+  exceptionPaidBy        User?           @relation("BdCommissionExceptionPaidBy", fields: [exceptionPaidById], references: [id])
+  paidBy                 User?           @relation("BdCommissionPaidBy", fields: [paidById], references: [id])
+  project                Project         @relation("BdCommissionProject", fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, completedMonthKey])
+  @@index([bdId, tab])
+  @@index([completedMonthKey])
+  @@index([payableOn])
+  @@index([tab])
+  @@index([paidAt])
+  @@index([exceptionPaidAt])
+}
+
+model ProjectAssignment {
+  id                   String            @id @default(cuid())
+  projectId            String
+  userId               String
+  assignedById         String?
+  assignedAt           DateTime          @default(now())
+  unassignedAt         DateTime?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+  cancelledForWorkerAt DateTime?
+  completedAt          DateTime?
+  outcome              AssignmentOutcome @default(ACTIVE)
+  allocatedHours       Int?
+  hoursLate            Int?
+  assignedBy           User?             @relation("AssignmentAssignedBy", fields: [assignedById], references: [id])
+  project              Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user                 User              @relation("AssignmentUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([userId])
+  @@index([projectId])
+  @@index([assignedById])
+  @@index([outcome])
+  @@index([cancelledForWorkerAt])
+  @@index([completedAt])
+}
+
+model ProjectMessage {
+  id          String      @id @default(cuid())
+  projectId   String
+  createdById String?
+  type        MessageType
+  content     String?
+  linkUrl     String?
+  meta        Json?
+  createdAt   DateTime    @default(now())
+  createdBy   User?       @relation("MessageCreatedBy", fields: [createdById], references: [id])
+  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt])
+  @@index([type])
+  @@index([createdById])
+}
+
+model ProjectActivity {
+  id        String   @id @default(cuid())
+  projectId String
+  actorId   String?
+  action    String
+  data      Json?
+  createdAt DateTime @default(now())
+  actor     User?    @relation("ActivityActor", fields: [actorId], references: [id])
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt])
+  @@index([action])
+  @@index([actorId])
+}
+
+model ProjectRating {
+  id              String   @id @default(cuid())
+  projectId       String   @unique
+  communication   Int
+  quality         Int
+  speed           Int
+  professionalism Int?
+  ratedById       String
+  ratedAt         DateTime @default(now())
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ratedBy         User     @relation("ProjectRatedBy", fields: [ratedById], references: [id])
+
+  @@index([ratedById])
+}
+
+model ProjectPaymentLine {
+  id        String            @id @default(cuid())
+  projectId String?
+  userId    String
+  amount    Decimal
+  status    PaymentLineStatus @default(UNPAID)
+  payableOn DateTime?
+  paidAt    DateTime?
+  paidById  String?
+  note      String?
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  paidBy    User?             @relation("PaymentMarkedBy", fields: [paidById], references: [id])
+  project   Project?          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User              @relation("PaymentLineUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([projectId])
+  @@index([payableOn])
+}
+
+model OnsiteProjectRating {
+  id        String   @id @default(cuid())
+  projectId String   @unique
+  m1        Int
+  m2        Int
+  m3        Int
+  m4        Int
+  m5        Int
+  ratedById String
+  ratedAt   DateTime @default(now())
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ratedBy   User     @relation("OnsiteRatedBy", fields: [ratedById], references: [id])
+
+  @@index([ratedById])
+}
+
+model OnsitePointCredit {
+  id        String   @id @default(cuid())
+  projectId String
+  userId    String
+  points    Int
+  setById   String?
+  monthKey  String
+  createdAt DateTime @default(now())
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  setBy     User?    @relation("OnsiteCreditSetBy", fields: [setById], references: [id])
+  user      User     @relation("OnsiteCreditUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([userId, monthKey])
+  @@index([projectId])
+  @@index([setById])
+}
+
+model UserInvite {
+  id          String                 @id @default(cuid())
+  email       String
+  role        Role
+  workerType  WorkerType?
+  status      InviteStatus           @default(PENDING)
+  tokenHash   String                 @unique
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  createdById String
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+  createdBy   User                   @relation("InviteCreatedBy", fields: [createdById], references: [id])
+  departments UserInviteDepartment[]
+
+  @@index([email])
+  @@index([status])
+  @@index([createdById])
+  @@index([expiresAt])
+}
+
+model UserInviteDepartment {
+  inviteId     String
+  departmentId String
+  createdAt    DateTime   @default(now())
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  invite       UserInvite @relation(fields: [inviteId], references: [id], onDelete: Cascade)
+
+  @@id([inviteId, departmentId])
+  @@index([departmentId])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Notification {
+  id         String                 @id @default(cuid())
+  userId     String
+  type       NotificationType
+  title      String
+  body       String?
+  href       String?
+  projectId  String?
+  actorId    String?
+  createdAt  DateTime               @default(now())
+  readAt     DateTime?
+  user       User                   @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  deliveries NotificationDelivery[]
+
+  @@index([userId, readAt, createdAt])
+  @@index([projectId])
+  @@index([type, createdAt])
+}
+
+model NotificationPreference {
+  userId                 String   @id
+  emailProjectMessages   Boolean  @default(true)
+  emailProjectStatus     Boolean  @default(true)
+  emailProjectCompletion Boolean  @default(true)
+  emailProjectRatings    Boolean  @default(true)
+  emailAssignments       Boolean  @default(true)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  emailTaskAssigned      Boolean  @default(true)
+  emailTaskDueSoon       Boolean  @default(true)
+  user                   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model NotificationDelivery {
+  id             String                     @id @default(cuid())
+  notificationId String?
+  userId         String?
+  toEmail        String
+  subject        String
+  html           String
+  status         NotificationDeliveryStatus @default(PENDING)
+  attempts       Int                        @default(0)
+  lastAttemptAt  DateTime?
+  sentAt         DateTime?
+  error          String?
+  createdAt      DateTime                   @default(now())
+  notification   Notification?              @relation(fields: [notificationId], references: [id])
+  user           User?                      @relation("NotificationDeliveryRecipient", fields: [userId], references: [id])
+
+  @@index([status, createdAt])
+  @@index([userId])
+}
+
+model ProjectWatcher {
+  id        String   @id @default(cuid())
+  projectId String
+  userId    String
+  createdAt DateTime @default(now())
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([userId])
+  @@index([projectId])
+}
+
+model SystemSetting {
+  key       String   @id
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ProjectLastSeen {
+  userId    String
+  projectId String
+  seenAt    DateTime
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, projectId])
+  @@index([userId])
+  @@index([projectId])
+}
+
+model OpsTask {
+  id          String            @id @default(cuid())
+  title       String
+  description String?
+  type        OpsTaskType
+  assigneeId  String
+  createdById String
+  timerHours  Int
+  runOnDays   Int[]
+  isActive    Boolean           @default(true)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  assignee    User              @relation("OpsTaskAssignee", fields: [assigneeId], references: [id])
+  createdBy   User              @relation("OpsTaskCreatedBy", fields: [createdById], references: [id])
+  instances   OpsTaskInstance[]
+
+  @@index([assigneeId])
+  @@index([createdById])
+  @@index([type, isActive])
+}
+
+model OpsTaskInstance {
+  id                   String    @id @default(cuid())
+  taskId               String
+  assigneeId           String
+  title                String
+  timerHours           Int
+  dueAt                DateTime
+  originalDueAt        DateTime
+  deadlineExtendedAt   DateTime?
+  deadlineExtendedById String?
+  status               String    @default("PENDING")
+  completedAt          DateTime?
+  completionNote       String?
+  points               Int?
+  reopenedAt           DateTime?
+  reopenedById         String?
+  dueSoonNotifiedAt    DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  assignee             User      @relation("OpsTaskInstanceAssignee", fields: [assigneeId], references: [id])
+  deadlineExtendedBy   User?     @relation("OpsTaskInstanceExtendedBy", fields: [deadlineExtendedById], references: [id])
+  reopenedBy           User?     @relation("OpsTaskInstanceReopenedBy", fields: [reopenedById], references: [id])
+  task                 OpsTask   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([assigneeId, status])
+  @@index([taskId])
+  @@index([dueAt])
+  @@index([status, dueAt])
+  @@index([assigneeId, createdAt])
+}
 
 enum Role {
   SUPER_ADMIN
@@ -32,13 +585,11 @@ enum WorkerType {
   OPERATIONS
 }
 
-// (Mini-Step 3)
 enum WorkType {
   ONSITE
   REMOTE
 }
 
-// (Mini-Step 3)
 enum ProjectPortal {
   UPWORK
   FIVERR
@@ -46,7 +597,6 @@ enum ProjectPortal {
   OTHER
 }
 
-// (Mini-Step 4)
 enum BdCommissionTab {
   ACTIVE
   CLEARING
@@ -101,11 +651,11 @@ enum AssignmentOutcome {
   ACTIVE
   COMPLETED
   CANCELLED
-  REMOVED   // Manager explicitly removed worker (not a worker cancellation)
+  REMOVED
 }
 
 enum NotificationType {
-  PROJECT_CREATED_UNASSIGNED // in-app only (dept feed)
+  PROJECT_CREATED_UNASSIGNED
   ASSIGNMENT_ADDED
   ASSIGNMENT_REMOVED
   PROJECT_STATUS_CHANGED
@@ -113,7 +663,6 @@ enum NotificationType {
   PROJECT_COMPLETED
   PROJECT_CANCELLED
   PROJECT_RATED
-   // ── Ops Tasks ──
   TASK_ASSIGNED
   TASK_DUE_SOON
   TASK_REOPENED
@@ -126,893 +675,7 @@ enum NotificationDeliveryStatus {
   SKIPPED
 }
 
-/**
- * =========================
- * USERS & DEPARTMENTS
- * =========================
- */
-
-model User {
-  id           String      @id @default(cuid())
-  fullName     String
-  username     String      @unique
-  email        String      @unique
-  passwordHash String
-  role         Role
-  workerType   WorkerType?
-
- // BD commission (Super Admin controlled)
-  // Stored as decimal fraction: 0.35 = 35%
-  bdCommissionRate Decimal? @db.Decimal(5, 4)
-
-  // Onsite cost rate (PKR per hour) — used in BD commission overhead calc
-  // Nullable: falls back to MonthlyFinanceConfig.avgOnsiteHourCostPkr
-  onsiteHourRatePkr Int?
-
-  // onsite performance (targets)
-  targetMonthlyPoints Int @default(0)
-
-  // project watching (adminish users)
-  watchedProjects ProjectWatcher[]
-
-  archivedAt DateTime?
-
-  // profile + presence (Mini-Step 13)
-  image        String?
-  avatarPath   String?
-  statusText   String?
-  lastActiveAt DateTime?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  joinedAt  DateTime @default(now())
-
-  // multi-department access
-  departments UserDepartment[]
-
-  // relations
-  // BD ownership on projects (Mini-Step 3)
-  bdOwnedProjects Project[] @relation("ProjectBdOwner")
-
-  // BD commissions (Mini-Step 4)
-  bdCommissions BdCommission[] @relation("BdCommissionBd")
-
-  // BD commissions marked paid / exception paid (Mini-Step 5)
-  bdCommissionPaid          BdCommission[] @relation("BdCommissionPaidBy")
-  bdCommissionExceptionPaid BdCommission[] @relation("BdCommissionExceptionPaidBy")
-
-  createdProjects Project[]           @relation("ProjectCreatedBy")
-  assignments     ProjectAssignment[] @relation("AssignmentUser")
-  assignedByLinks ProjectAssignment[] @relation("AssignmentAssignedBy")
-  messages        ProjectMessage[]    @relation("MessageCreatedBy")
-  activities      ProjectActivity[]   @relation("ActivityActor")
-  ratingsGiven    ProjectRating[]     @relation("ProjectRatedBy")
-
-  // payments (remote-only, split lines per project)
-  paymentLines        ProjectPaymentLine[] @relation("PaymentLineUser")
-  paymentMarkedByLogs ProjectPaymentLine[] @relation("PaymentMarkedBy")
-
-  // onsite performance
-  onsiteCredits      OnsitePointCredit[]   @relation("OnsiteCreditUser")
-  onsiteCreditsSetBy OnsitePointCredit[]   @relation("OnsiteCreditSetBy")
-  onsiteRatedBy      OnsiteProjectRating[] @relation("OnsiteRatedBy")
-
-  bdAdjustments        BdCommissionAdjustment[]
-  createdBdAdjustments BdCommissionAdjustment[] @relation("BdAdjustmentCreatedBy")
-
-  // invites & password reset (Mini-Step 13)
-  invitesCreated UserInvite[] @relation("InviteCreatedBy")
-  passwordResets PasswordResetToken[]
-
-  // notifications
-  notifications           Notification[]         @relation("NotificationRecipient")
-  notificationDeliveries  NotificationDelivery[] @relation("NotificationDeliveryRecipient")
-  notificationPreferences NotificationPreference?
-
-// Ops Tasks
-  projectLastSeen     ProjectLastSeen[]
-
-  opsTasksAssigned    OpsTask[]         @relation("OpsTaskAssignee")
-  opsTasksCreated     OpsTask[]         @relation("OpsTaskCreatedBy")
-  opsTaskInstances    OpsTaskInstance[] @relation("OpsTaskInstanceAssignee")
-  opsTasksReopened    OpsTaskInstance[] @relation("OpsTaskInstanceReopenedBy")
-  opsTasksExtended    OpsTaskInstance[] @relation("OpsTaskInstanceExtendedBy")
-
-  @@index([role])
-  @@index([workerType])
-  @@index([email])
-  @@index([joinedAt])
-  @@index([bdCommissionRate])
-}
-
-model MonthlyFinanceConfig {
-  id String @id @default(cuid())
-
-  // YYYY-MM
-  monthKey String @unique
-
-  // USD -> PKR
-  fxRate Decimal @db.Decimal(12, 4)
-
-  // Fully-loaded onsite cost per hour (PKR)
-  avgOnsiteHourCostPkr Int
-
-  // Monthly fixed overhead bucket for REMOTE (PKR)
-  remoteOverheadFixedPkr Int
-
-  finalizedAt DateTime?
-  notes       String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([monthKey])
-  @@index([finalizedAt])
-}
-
-model Department {
-  id   String @id @default(cuid())
-  name String @unique
-  slug String @unique
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  users             UserDepartment[]
-  projects          Project[]
-  inviteDepartments UserInviteDepartment[]
-}
-
-model UserDepartment {
-  userId       String
-  departmentId String
-  createdAt    DateTime @default(now())
-
-  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
-
-  @@id([userId, departmentId])
-  @@index([departmentId])
-}
-
-/**
- * =========================
- * PROJECT CLASS DEFINITIONS
- * =========================
- */
-
-model ProjectClassDefinition {
-  id         String       @id @default(cuid())
-  class      ProjectClass @unique
-  basePoints Int
-
-  projects Project[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-/**
- * =========================
- * PROJECTS (V1 FINAL)
- * =========================
- */
-
-model Project {
-  id          String  @id @default(cuid())
-  title       String
-  description String?
-
-  departmentId String
-  department   Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
-
-  status ProjectStatus @default(UNASSIGNED)
-
-  /**
-   * ---- Status timestamps (NEW) ----
-   * cancelledAt: set exactly when status becomes CANCELLED
-   * statusChangedAt: set on every status change (useful for audits/analytics)
-   */
-  cancelledAt     DateTime?
-  statusChangedAt DateTime?
-
-  /**
-   * ---- Deadline + Timer (V1 final) ----
-   */
-  deadlineHours           Int       @default(0)
-  timerRunning            Boolean   @default(false)
-  timerLastResumedAt      DateTime?
-  timerAccumulatedSeconds Int       @default(0)
-
-  /**
-   * ---- Onsite (V1) ----
-   */
-  onsitePointsManual Int?
-
-  projectClassDefinitionId String?
-  projectClassDefinition   ProjectClassDefinition? @relation(fields: [projectClassDefinitionId], references: [id], onDelete: SetNull)
-
-  classBasePointsAtFirstCompletion Int?
-  extraPoints                      Int?
-
-  watchers ProjectWatcher[]
-
-  /**
-   * ---- BD ownership (Mini-Step 3) ----
-   */
-  bdOwnerId String?
-  bdOwner   User? @relation("ProjectBdOwner", fields: [bdOwnerId], references: [id], onDelete: SetNull)
-
-  /**
-   * ---- Finance (Mini-Step 3) ----
-   * kept in separate table for long-term maintainability
-   */
-  finance ProjectFinance?
-
-  /**
-   * ---- BD Commissions (Mini-Step 4) ----
-   */
-  bdCommissions BdCommission[] @relation("BdCommissionProject")
-
-  /**
-   * ---- Remote (V1) ----
-   */
-  remotePrice Decimal?
-
-  /**
-   * ---- Immutable first completion ----
-   */
-  firstCompletedAt DateTime?
-
-  /**
-   * ---- Creator ----
-   */
-  createdById String
-  createdBy   User @relation("ProjectCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  /**
-   * ---- Relations ----
-   */
-  assignments ProjectAssignment[]
-  messages    ProjectMessage[]
-  activities  ProjectActivity[]
-  rating      ProjectRating?
-
-  paymentLines ProjectPaymentLine[]
-
-  onsiteRating  OnsiteProjectRating?
-  onsiteCredits OnsitePointCredit[]
-
-  lastSeenBy    ProjectLastSeen[]
-
-  @@index([departmentId])
-  @@index([status])
-  @@index([createdById])
-  @@index([bdOwnerId])
-  // NEW indexes (optional but recommended)
-  @@index([cancelledAt])
-  @@index([statusChangedAt])
-}
-
-/**
- * =========================
- * FINANCE (MINI-STEP 3)
- * =========================
- */
-
-model ProjectFinance {
-  id String @id @default(cuid())
-
-  projectId String  @unique
-  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-
-  // Financial metadata (not for workers)
-  clientName     String?
-  clientUsername String?
-
-  // Billing type (project type, NOT user workerType)
-  workType WorkType @default(REMOTE)
-
-  // Portal/platform
-  portal ProjectPortal @default(OTHER)
-
-  // Required (DB default prevents migration failure for existing rows)
-  // New project creation enforces > 0 in server validation.
-  priceUsd Decimal @default(0) @db.Decimal(12, 2)
-
-  // existing (keep for now)
-  platformFeeUsd Decimal? @db.Decimal(12, 2)
-
-  // new
-  platformFeePercent Decimal? @db.Decimal(5, 2) // e.g. 20.00 for 20%
-
-  // Onsite-only
-  allowedHours Int?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([projectId])
-  @@index([portal])
-  @@index([workType])
-}
-
-model BdCommissionAdjustment {
-  id String @id @default(cuid())
-
-  bdUserId String
-  bdUser   User @relation(fields: [bdUserId], references: [id], onDelete: Cascade)
-
-  monthKey String // YYYY-MM (same concept as your finance config monthKey)
-  tab      BdCommissionTab // CLEARING | DUE | PAID
-
-  amountPkr Decimal @db.Decimal(14, 2) // can be negative
-  note      String
-
-  dueOn  DateTime
-  paidAt DateTime?
-
-  createdById String
-  createdBy   User @relation("BdAdjustmentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-
-  createdAt DateTime @default(now())
-
-  @@index([bdUserId, monthKey])
-  @@index([tab, dueOn])
-}
-
-/**
- * =========================
- * BD COMMISSION (MINI-STEP 4)
- * =========================
- */
-
-model BdCommission {
-  id String @id @default(cuid())
-
-  // Relations
-  projectId String
-  project   Project @relation("BdCommissionProject", fields: [projectId], references: [id], onDelete: Cascade)
-
-  bdId String
-  bd   User @relation("BdCommissionBd", fields: [bdId], references: [id], onDelete: Restrict)
-
-  // Month context
-  completedMonthKey String
-
-  // Tab state
-  tab BdCommissionTab @default(ACTIVE)
-
-  // Dates
-  dueOn     DateTime
-  payableOn DateTime
-
-  // ---- Paid / Exception Paid (Mini-Step 5) ----
-  paidAt   DateTime?
-  paidNote String?
-  paidById String?
-  paidBy   User? @relation("BdCommissionPaidBy", fields: [paidById], references: [id], onDelete: SetNull)
-
-  exceptionPaidAt   DateTime?
-  exceptionPaidNote String?
-  exceptionPaidById String?
-  exceptionPaidBy   User? @relation("BdCommissionExceptionPaidBy", fields: [exceptionPaidById], references: [id], onDelete: SetNull)
-
-  // ===== Snapshot Inputs =====
-  workType WorkType
-  portal   ProjectPortal
-
-  priceUsd Decimal @db.Decimal(12, 2)
-
-  // existing snapshot (keep for now)
-  platformFeeUsd Decimal @db.Decimal(12, 2)
-
-  // new snapshot (TEMP nullable for step1)
-  platformFeePercent Decimal? @db.Decimal(5, 2)
-
-  fxRate Decimal @db.Decimal(12, 4)
-
-  avgOnsiteHourCostPkr   Int
-  remoteOverheadFixedPkr Int
-
-  allowedHours Int?
-
-  bdRate Decimal @db.Decimal(5, 4)
-
-  // ===== Computed =====
-  netUsd          Decimal @db.Decimal(12, 2)
-  netPkr          Decimal @db.Decimal(14, 2)
-  overheadPkr     Decimal @db.Decimal(14, 2)
-  profitPkr       Decimal @db.Decimal(14, 2)
-  bdPayoutPkr     Decimal @db.Decimal(14, 2)
-  companySharePkr Decimal @db.Decimal(14, 2)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([projectId, completedMonthKey])
-  @@index([bdId, tab])
-  @@index([completedMonthKey])
-  @@index([payableOn])
-  @@index([tab])
-  @@index([paidAt])
-  @@index([exceptionPaidAt])
-}
-
-/**
- * =========================
- * ASSIGNMENTS (RELATIONAL ONLY)
- * =========================
- */
-
-model ProjectAssignment {
-  id        String @id @default(cuid())
-  projectId String
-  userId    String
-
-  assignedById String?
-  assignedAt   DateTime  @default(now())
-  unassignedAt DateTime?
-
-// ✅ Standalone worker-level outcome (does NOT affect Project.status)
-  outcome              AssignmentOutcome @default(ACTIVE)
-  cancelledForWorkerAt DateTime?
-  completedAt          DateTime?
-
-  // Hours allocated to this worker for this project (onsite only)
-  // Nullable: only set for ONSITE_EMPLOYEE assignments
-  allocatedHours Int?
-  hoursLate      Int?
-
-  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user       User    @relation("AssignmentUser", fields: [userId], references: [id], onDelete: Cascade)
-  assignedBy User?   @relation("AssignmentAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([projectId, userId])
-  @@index([userId])
-  @@index([projectId])
-  @@index([assignedById])
-
-  // helpful for reports
-  @@index([outcome])
-  @@index([cancelledForWorkerAt])
-  @@index([completedAt])
-}
-
-/**
- * =========================
- * CHAT & ACTIVITY
- * =========================
- */
-
-model ProjectMessage {
-  id          String @id @default(cuid())
-  projectId   String
-  createdById String?
-
-  type    MessageType
-  content String?
-  linkUrl String?
-  meta    Json?
-
-  createdAt DateTime @default(now())
-
-  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  createdBy User?   @relation("MessageCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-
-  @@index([projectId, createdAt])
-  @@index([type])
-  @@index([createdById])
-}
-
-model ProjectActivity {
-  id        String @id @default(cuid())
-  projectId String
-  actorId   String?
-  action    String
-  data      Json?
-
-  createdAt DateTime @default(now())
-
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  actor   User?   @relation("ActivityActor", fields: [actorId], references: [id], onDelete: SetNull)
-
-  @@index([projectId, createdAt])
-  @@index([action])
-  @@index([actorId])
-}
-
-/**
- * =========================
- * RATINGS (IMMUTABLE) - EXISTING (BD rating)
- * =========================
- */
-
-model ProjectRating {
-  id        String @id @default(cuid())
-  projectId String @unique
-
-  communication   Int
-  quality         Int
-  speed           Int
-  professionalism Int?
-
-  ratedById String
-  ratedBy   User @relation("ProjectRatedBy", fields: [ratedById], references: [id], onDelete: Restrict)
-
-  ratedAt DateTime @default(now())
-
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-
-  @@index([ratedById])
-}
-
-/**
- * =========================
- * PAYMENTS (REMOTE ONLY)
- * =========================
- */
-
-model ProjectPaymentLine {
-  id String @id @default(cuid())
-
-  projectId String?
-  project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
-
-  userId String
-  user   User @relation("PaymentLineUser", fields: [userId], references: [id], onDelete: Cascade)
-
-  amount    Decimal
-  status    PaymentLineStatus @default(UNPAID)
-  payableOn DateTime?  // null until firstCompletedAt is set
-
-  paidAt   DateTime?
-  paidById String?
-  paidBy   User? @relation("PaymentMarkedBy", fields: [paidById], references: [id], onDelete: SetNull)
-
-  note String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([userId, status])
-  @@index([projectId])
-  @@index([payableOn])
-}
-
-/**
- * =========================
- * ONSITE PERFORMANCE (STEP 11)
- * =========================
- */
-
-model OnsiteProjectRating {
-  id String @id @default(cuid())
-
-  projectId String  @unique
-  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-
-  // 5-star metrics (1..5)
-  m1 Int
-  m2 Int
-  m3 Int
-  m4 Int
-  m5 Int
-
-  ratedById String
-  ratedBy   User @relation("OnsiteRatedBy", fields: [ratedById], references: [id], onDelete: Restrict)
-
-  ratedAt DateTime @default(now())
-
-  @@index([ratedById])
-}
-
-model OnsitePointCredit {
-  id String @id @default(cuid())
-
-  projectId String
-  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-
-  userId String
-  user   User @relation("OnsiteCreditUser", fields: [userId], references: [id], onDelete: Cascade)
-
-  // Final credited points for this worker for this project (manual split)
-  points Int
-
-  // Who set it (admin/manager/bd)
-  setById String?
-  setBy   User? @relation("OnsiteCreditSetBy", fields: [setById], references: [id], onDelete: SetNull)
-
-  // Derived from project.firstCompletedAt for reporting (YYYY-MM)
-  monthKey String
-
-  createdAt DateTime @default(now())
-
-  @@unique([projectId, userId])
-  @@index([userId, monthKey])
-  @@index([projectId])
-  @@index([setById])
-}
-
-/**
- * =========================
- * INVITES (MINI-STEP 13)
- * =========================
- */
-
-model UserInvite {
-  id String @id @default(cuid())
-
-  email String
-
-  // Role + worker type are decided at invite time
-  role       Role
-  workerType WorkerType?
-
-  status InviteStatus @default(PENDING)
-
-  // Store only a hash of the token (never store raw token)
-  tokenHash String @unique
-
-  expiresAt  DateTime
-  acceptedAt DateTime?
-
-  // who created the invite
-  createdById String
-  createdBy   User @relation("InviteCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-
-  // departments selected at invite-time
-  departments UserInviteDepartment[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([email])
-  @@index([status])
-  @@index([createdById])
-  @@index([expiresAt])
-}
-
-model UserInviteDepartment {
-  inviteId     String
-  departmentId String
-
-  invite     UserInvite @relation(fields: [inviteId], references: [id], onDelete: Cascade)
-  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime @default(now())
-
-  @@id([inviteId, departmentId])
-  @@index([departmentId])
-}
-
-/**
- * =========================
- * PASSWORD RESET (MINI-STEP 13)
- * =========================
- */
-
-model PasswordResetToken {
-  id String @id @default(cuid())
-
-  userId String
-  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  // Store only a hash of the token (never store raw token)
-  tokenHash String @unique
-
-  expiresAt DateTime
-  usedAt    DateTime?
-
-  createdAt DateTime @default(now())
-
-  @@index([userId])
-  @@index([expiresAt])
-}
-
-model Notification {
-  id     String @id @default(cuid())
-  userId String
-  user   User @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
-
-  type      NotificationType
-  title     String
-  body      String?
-  href      String?
-  projectId String?
-
-  actorId   String?
-  createdAt DateTime @default(now())
-  readAt    DateTime?
-
-  // ✅ opposite side for NotificationDelivery.notification
-  deliveries NotificationDelivery[]
-
-  @@index([userId, readAt, createdAt])
-  @@index([projectId])
-  @@index([type, createdAt])
-}
-
-model NotificationPreference {
-  userId String @id
-  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  // Email: ONLY for assigned-project events (defaults true if row missing)
-  emailProjectMessages   Boolean @default(true)
-  emailProjectStatus     Boolean @default(true)
-  emailProjectCompletion Boolean @default(true)
-  emailProjectRatings    Boolean @default(true)
-  emailAssignments       Boolean @default(true)
-
-emailTaskAssigned  Boolean @default(true)
-  emailTaskDueSoon   Boolean @default(true)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-model NotificationDelivery {
-  id             String        @id @default(cuid())
-  notificationId String?
-  notification   Notification? @relation(fields: [notificationId], references: [id], onDelete: SetNull)
-
-  userId String?
-  user   User? @relation("NotificationDeliveryRecipient", fields: [userId], references: [id], onDelete: SetNull)
-
-  toEmail String
-  subject String
-  html    String
-
-  status        NotificationDeliveryStatus @default(PENDING)
-  attempts      Int                        @default(0)
-  lastAttemptAt DateTime?
-  sentAt        DateTime?
-  error         String?
-
-  createdAt DateTime @default(now())
-
-  @@index([status, createdAt])
-  @@index([userId])
-}
-
-model ProjectWatcher {
-  id String @id @default(cuid())
-
-  projectId String
-  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-
-  userId String
-  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime @default(now())
-
-  @@unique([projectId, userId])
-  @@index([userId])
-  @@index([projectId])
-}
-
-
-model SystemSetting {
-  key       String   @id
-  value     String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-
-/**
- * =========================
- * OPS TASKS
- * =========================
- */
-
 enum OpsTaskType {
   ONE_OFF
   RECURRING
-}
-
-/**
- * =========================
- * PROJECT LAST SEEN
- * Tracks when each user last opened a project page.
- * Used to show unread indicators on project index cards.
- * =========================
- */
-
-model ProjectLastSeen {
-  userId    String
-  projectId String
-  seenAt    DateTime
-
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-
-  @@id([userId, projectId])
-  @@index([userId])
-  @@index([projectId])
-}
-
-model OpsTask {
-  id          String     @id @default(cuid())
-  title       String
-  description String?
-  type        OpsTaskType
-
-  assigneeId  String
-  assignee    User   @relation("OpsTaskAssignee", fields: [assigneeId], references: [id], onDelete: Restrict)
-
-  createdById String
-  createdBy   User   @relation("OpsTaskCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-
-  // Hours the assignee has to complete this task
-  timerHours  Int
-
-  // RECURRING only — which days to generate (0=Sun,1=Mon,...,6=Sat)
-  // Stored as array of ints. Empty = paused. All 7 = every day.
-  runOnDays   Int[]
-
-  // Soft-pause recurring without deleting
-  isActive    Boolean @default(true)
-
-  instances   OpsTaskInstance[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([assigneeId])
-  @@index([createdById])
-  @@index([type, isActive])
-}
-
-model OpsTaskInstance {
-  id     String  @id @default(cuid())
-  taskId String
-  task   OpsTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
-
-  // Denormalised at creation time so history is preserved if task changes
-  assigneeId  String
-  assignee    User   @relation("OpsTaskInstanceAssignee", fields: [assigneeId], references: [id], onDelete: Restrict)
-  title       String
-  timerHours  Int
-
-  // Deadline — set at creation, can be extended by super admin
-  dueAt         DateTime
-  originalDueAt DateTime  // never changes — used to compute lateness tier
-
-  // Admin deadline extension log
-  deadlineExtendedAt    DateTime?
-  deadlineExtendedById  String?
-  deadlineExtendedBy    User?     @relation("OpsTaskInstanceExtendedBy", fields: [deadlineExtendedById], references: [id], onDelete: SetNull)
-
-  // Completion
-  status         String    @default("PENDING") // "PENDING" | "COMPLETED"
-  completedAt    DateTime?
-  completionNote String?   // optional note by employee
-
-  // Points awarded on completion (null = not yet done)
-  // 10 = on time, 6 = late ≤2x, 3 = late >2x
-  points Int?
-
-  // Admin reopen log
-  reopenedAt   DateTime?
-  reopenedById String?
-  reopenedBy   User?     @relation("OpsTaskInstanceReopenedBy", fields: [reopenedById], references: [id], onDelete: SetNull)
-
-  // Notification guard — prevents duplicate due-soon alerts
-  dueSoonNotifiedAt DateTime?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([assigneeId, status])
-  @@index([taskId])
-  @@index([dueAt])
-  @@index([status, dueAt])
-  @@index([assigneeId, createdAt])
 }
