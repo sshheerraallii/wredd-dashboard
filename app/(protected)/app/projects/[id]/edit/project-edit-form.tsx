@@ -9,6 +9,14 @@ import { updateProject, deleteProject } from "./actions";
 
 type Dept = { id: string; name: string };
 
+type FinanceProps = {
+  priceUsd: string;
+  platformFeePercent: string;
+  portal: string;
+  clientName: string;
+  clientUsername: string;
+};
+
 export default function EditProjectForm(props: {
   project: {
     id: string;
@@ -18,10 +26,20 @@ export default function EditProjectForm(props: {
     deadlineHours: number;
   };
   departments: Dept[];
+  finance: FinanceProps;
+  isSample: boolean;
+  financeEditable: boolean;
 }) {
-  const { project, departments } = props;
+  const { project, departments, finance, financeEditable } = props;
   const [pending, start] = useTransition();
   const [confirmText, setConfirmText] = useState("");
+
+  // Finance state (only used when editable)
+  const [isSample, setIsSample] = useState(props.isSample);
+  const [priceUsd, setPriceUsd] = useState(finance.priceUsd);
+  const [platformFeePercent, setPlatformFeePercent] = useState(finance.platformFeePercent);
+  const [clientName, setClientName] = useState(finance.clientName);
+  const [clientUsername, setClientUsername] = useState(finance.clientUsername);
 
   return (
     <div className="rounded-xl border bg-background p-4 space-y-4">
@@ -71,6 +89,102 @@ export default function EditProjectForm(props: {
             defaultValue={project.deadlineHours}
             required
           />
+        </div>
+
+        {/* Finance */}
+        <div className="border-t pt-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-medium">Finance</div>
+            {!financeEditable && (
+              <span className="text-xs text-muted-foreground">
+                Locked — project has been completed
+              </span>
+            )}
+          </div>
+
+          {financeEditable ? (
+            <>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={isSample}
+                  onChange={(e) => setIsSample(e.target.checked)}
+                />
+                Sample project (no price, excluded from BD commission &amp; finance)
+              </label>
+              <input type="hidden" name="isSample" value={String(isSample)} />
+
+              {!isSample && (
+                <>
+                  <div className="grid gap-2">
+                    <label className="text-sm font-medium">Portal</label>
+                    <select
+                      name="portal"
+                      defaultValue={finance.portal}
+                      className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                    >
+                      <option value="UPWORK">Upwork</option>
+                      <option value="FIVERR">Fiverr</option>
+                      <option value="DIRECT">Direct</option>
+                      <option value="OTHER">Other</option>
+                    </select>
+                  </div>
+
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div className="grid gap-2">
+                      <label className="text-sm font-medium">Price (USD)</label>
+                      <Input
+                        name="priceUsd"
+                        inputMode="decimal"
+                        placeholder="e.g., 250"
+                        value={priceUsd}
+                        onChange={(e) => setPriceUsd(e.target.value)}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <label className="text-sm font-medium">Platform fee (%)</label>
+                      <Input
+                        name="platformFeePercent"
+                        inputMode="decimal"
+                        placeholder="e.g., 20"
+                        value={platformFeePercent}
+                        onChange={(e) => setPlatformFeePercent(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div className="grid gap-2">
+                  <label className="text-sm font-medium">Client name</label>
+                  <Input
+                    name="clientName"
+                    value={clientName}
+                    onChange={(e) => setClientName(e.target.value)}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <label className="text-sm font-medium">Client username</label>
+                  <Input
+                    name="clientUsername"
+                    value={clientUsername}
+                    onChange={(e) => setClientUsername(e.target.value)}
+                  />
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="text-sm text-muted-foreground space-y-1">
+              <div>Portal: {finance.portal}</div>
+              <div>Price (USD): {finance.priceUsd || "—"}</div>
+              <div>Platform fee (%): {finance.platformFeePercent || "—"}</div>
+              <div>
+                Client: {finance.clientName || "—"}
+                {finance.clientUsername ? ` (${finance.clientUsername})` : ""}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-2 pt-2">

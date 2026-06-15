@@ -1,0 +1,383 @@
+diff --git a/app/(protected)/app/projects/[id]/edit/actions.ts b/app/(protected)/app/projects/[id]/edit/actions.ts
+index 9f43c02..49ade6a 100644
+--- a/app/(protected)/app/projects/[id]/edit/actions.ts
++++ b/app/(protected)/app/projects/[id]/edit/actions.ts
+@@ -5,6 +5,7 @@ import { z } from "zod";
+ import { redirect } from "next/navigation";
+ import { readSession } from "@/lib/auth";
+ import { getPrisma } from "@/lib/prisma";
++import { Prisma } from "@prisma/client";
+ 
+ const prisma = getPrisma();
+ 
+@@ -14,12 +15,46 @@ function requireCanManageProject(role?: string) {
+   }
+ }
+ 
++// Edit-local validators: on failure, redirect back to THIS edit page with ?err=
++function editError(id: string, msg: string): never {
++  redirect(`/app/projects/${id}/edit?err=${encodeURIComponent(msg)}`);
++}
++
++function parseUsdRequired(id: string, raw: unknown): Prisma.Decimal {
++  const s = String(raw ?? "").trim();
++  if (!s) editError(id, "Price (USD) is required");
++  if (!/^\d+(\.\d{1,2})?$/.test(s)) editError(id, "Price (USD) must be a valid USD amount");
++  const n = Number(s);
++  if (!Number.isFinite(n) || n <= 0) editError(id, "Price (USD) must be greater than 0");
++  return new Prisma.Decimal(n.toFixed(2));
++}
++
++function parsePercentOrZero(id: string, raw: unknown): Prisma.Decimal {
++  const s = String(raw ?? "").trim();
++  if (!s) return new Prisma.Decimal("0.00");
++  if (!/^\d+(\.\d{1,2})?$/.test(s)) editError(id, "Platform fee (%) must be a valid percent (e.g., 20 or 20.5)");
++  const n = Number(s);
++  if (!Number.isFinite(n) || n < 0) editError(id, "Platform fee (%) must be 0 or more");
++  if (n > 100) editError(id, "Platform fee (%) cannot exceed 100");
++  return new Prisma.Decimal(n.toFixed(2));
++}
++
++const PORTALS = ["UPWORK", "FIVERR", "DIRECT", "OTHER"] as const;
++
+ const updateSchema = z.object({
+   id: z.string().min(1),
+   title: z.string().min(2).max(140),
+   description: z.string().max(5000).optional().nullable(),
+   departmentId: z.string().min(1),
+   deadlineHours: z.coerce.number().int().min(1).max(24 * 365),
++  // Finance fields are optional at schema level; they are gated server-side
++  // and only applied when the project has never been completed.
++  isSample: z.string().optional(),
++  portal: z.enum(PORTALS).optional(),
++  priceUsdRaw: z.string().optional(),
++  platformFeePercentRaw: z.string().optional(),
++  clientName: z.string().max(200).optional().nullable(),
++  clientUsername: z.string().max(200).optional().nullable(),
+ });
+ 
+ export async function updateProject(formData: FormData) {
+@@ -32,6 +67,12 @@ export async function updateProject(formData: FormData) {
+     description: formData.get("description"),
+     departmentId: formData.get("departmentId"),
+     deadlineHours: formData.get("deadlineHours"),
++    isSample: formData.get("isSample"),
++    portal: formData.get("portal"),
++    priceUsdRaw: formData.get("priceUsd"),
++    platformFeePercentRaw: formData.get("platformFeePercent"),
++    clientName: formData.get("clientName"),
++    clientUsername: formData.get("clientUsername"),
+   });
+ 
+   if (!parsed.success) {
+@@ -40,15 +81,73 @@ export async function updateProject(formData: FormData) {
+ 
+   const { id, title, description, departmentId, deadlineHours } = parsed.data;
+ 
+-  await prisma.project.update({
++  // Re-check the completion lock server-side. Never trust the client to enforce it.
++  const current = await prisma.project.findUnique({
+     where: { id },
+-    data: {
+-      title,
+-      description: description ? description : null,
+-      departmentId,
+-      deadlineHours,
+-    },
+-    select: { id: true },
++    select: { id: true, firstCompletedAt: true },
++  });
++  if (!current) redirect(`/app/projects?err=not_found`);
++
++  const financeEditable = current.firstCompletedAt == null;
++
++  // Core fields stay editable regardless of completion (e.g. fixing a typo).
++  const coreData = {
++    title,
++    description: description ? description : null,
++    departmentId,
++    deadlineHours,
++  };
++
++  if (!financeEditable) {
++    // Completed (or reopened-after-completion): finance is locked.
++    // Save core fields only; ignore any finance values that came through.
++    await prisma.project.update({ where: { id }, data: coreData, select: { id: true } });
++    redirect(`/app/projects/${id}?ok=updated`);
++  }
++
++  // Finance editable. Parse + apply, including sample <-> priced promotion.
++  const isSample = String(parsed.data.isSample ?? "") === "true";
++
++  const priceUsd = isSample
++    ? new Prisma.Decimal("0.00")
++    : parseUsdRequired(id, parsed.data.priceUsdRaw);
++
++  const platformFeePercent = isSample
++    ? new Prisma.Decimal("0.00")
++    : parsePercentOrZero(id, parsed.data.platformFeePercentRaw);
++
++  const portal = isSample ? "OTHER" : (parsed.data.portal ?? "OTHER");
++  const clientName = (parsed.data.clientName ?? "").trim() || null;
++  const clientUsername = (parsed.data.clientUsername ?? "").trim() || null;
++
++  await prisma.$transaction(async (tx) => {
++    await tx.project.update({
++      where: { id },
++      data: { ...coreData, isSample },
++      select: { id: true },
++    });
++
++    // upsert handles older projects whose ProjectFinance row may be missing.
++    await tx.projectFinance.upsert({
++      where: { projectId: id },
++      update: {
++        priceUsd,
++        platformFeePercent,
++        portal,
++        clientName,
++        clientUsername,
++      } as any,
++      create: {
++        projectId: id,
++        workType: "REMOTE",
++        allowedHours: null,
++        priceUsd,
++        platformFeePercent,
++        portal,
++        clientName,
++        clientUsername,
++      } as any,
++    });
+   });
+ 
+   redirect(`/app/projects/${id}?ok=updated`);
+@@ -65,8 +164,8 @@ export async function deleteProject(formData: FormData) {
+ 
+   const { id } = parsed.data;
+ 
+-  // Hard delete (simple + consistent). If you later want soft-delete, we’ll add archivedAt/status.
++  // Hard delete (simple + consistent). If you later want soft-delete, we'll add archivedAt/status.
+   await prisma.project.delete({ where: { id } });
+ 
+   redirect(`/app/projects?ok=deleted`);
+-}
+\ No newline at end of file
++}
+diff --git a/app/(protected)/app/projects/[id]/edit/page.tsx b/app/(protected)/app/projects/[id]/edit/page.tsx
+index 8534e37..2017683 100644
+--- a/app/(protected)/app/projects/[id]/edit/page.tsx
++++ b/app/(protected)/app/projects/[id]/edit/page.tsx
+@@ -31,6 +31,17 @@ export default async function ProjectEditPage(props: { params: Promise<{ id: str
+         deadlineHours: true,
+         status: true,
+         createdAt: true,
++        isSample: true,
++        firstCompletedAt: true,
++        finance: {
++          select: {
++            priceUsd: true,
++            platformFeePercent: true,
++            portal: true,
++            clientName: true,
++            clientUsername: true,
++          },
++        },
+       },
+     }),
+     prisma.department.findMany({
+@@ -41,6 +52,19 @@ export default async function ProjectEditPage(props: { params: Promise<{ id: str
+ 
+   if (!project) redirect("/app/projects?err=not_found");
+ 
++  // Finance is editable only while the project has never been completed.
++  const financeEditable = project.firstCompletedAt == null;
++
++  // Serialize Decimals to strings before handing them to the client component.
++  const finance = {
++    priceUsd: project.finance?.priceUsd != null ? String(project.finance.priceUsd) : "",
++    platformFeePercent:
++      project.finance?.platformFeePercent != null ? String(project.finance.platformFeePercent) : "",
++    portal: project.finance?.portal ?? "OTHER",
++    clientName: project.finance?.clientName ?? "",
++    clientUsername: project.finance?.clientUsername ?? "",
++  };
++
+   return (
+     <div className="space-y-4">
+       <div className="flex items-start justify-between gap-3">
+@@ -50,7 +74,19 @@ export default async function ProjectEditPage(props: { params: Promise<{ id: str
+         </div>
+       </div>
+ 
+-      <EditProjectForm project={project} departments={departments} />
++      <EditProjectForm
++        project={{
++          id: project.id,
++          title: project.title,
++          description: project.description,
++          departmentId: project.departmentId,
++          deadlineHours: project.deadlineHours,
++        }}
++        departments={departments}
++        finance={finance}
++        isSample={project.isSample}
++        financeEditable={financeEditable}
++      />
+     </div>
+   );
+-}
+\ No newline at end of file
++}
+diff --git a/app/(protected)/app/projects/[id]/edit/project-edit-form.tsx b/app/(protected)/app/projects/[id]/edit/project-edit-form.tsx
+index 5df1366..acdb177 100644
+--- a/app/(protected)/app/projects/[id]/edit/project-edit-form.tsx
++++ b/app/(protected)/app/projects/[id]/edit/project-edit-form.tsx
+@@ -9,6 +9,14 @@ import { updateProject, deleteProject } from "./actions";
+ 
+ type Dept = { id: string; name: string };
+ 
++type FinanceProps = {
++  priceUsd: string;
++  platformFeePercent: string;
++  portal: string;
++  clientName: string;
++  clientUsername: string;
++};
++
+ export default function EditProjectForm(props: {
+   project: {
+     id: string;
+@@ -18,11 +26,21 @@ export default function EditProjectForm(props: {
+     deadlineHours: number;
+   };
+   departments: Dept[];
++  finance: FinanceProps;
++  isSample: boolean;
++  financeEditable: boolean;
+ }) {
+-  const { project, departments } = props;
++  const { project, departments, finance, financeEditable } = props;
+   const [pending, start] = useTransition();
+   const [confirmText, setConfirmText] = useState("");
+ 
++  // Finance state (only used when editable)
++  const [isSample, setIsSample] = useState(props.isSample);
++  const [priceUsd, setPriceUsd] = useState(finance.priceUsd);
++  const [platformFeePercent, setPlatformFeePercent] = useState(finance.platformFeePercent);
++  const [clientName, setClientName] = useState(finance.clientName);
++  const [clientUsername, setClientUsername] = useState(finance.clientUsername);
++
+   return (
+     <div className="rounded-xl border bg-background p-4 space-y-4">
+       <form
+@@ -73,6 +91,102 @@ export default function EditProjectForm(props: {
+           />
+         </div>
+ 
++        {/* Finance */}
++        <div className="border-t pt-4 space-y-3">
++          <div className="flex items-center justify-between">
++            <div className="text-sm font-medium">Finance</div>
++            {!financeEditable && (
++              <span className="text-xs text-muted-foreground">
++                Locked — project has been completed
++              </span>
++            )}
++          </div>
++
++          {financeEditable ? (
++            <>
++              <label className="flex items-center gap-2 text-sm">
++                <input
++                  type="checkbox"
++                  checked={isSample}
++                  onChange={(e) => setIsSample(e.target.checked)}
++                />
++                Sample project (no price, excluded from BD commission &amp; finance)
++              </label>
++              <input type="hidden" name="isSample" value={String(isSample)} />
++
++              {!isSample && (
++                <>
++                  <div className="grid gap-2">
++                    <label className="text-sm font-medium">Portal</label>
++                    <select
++                      name="portal"
++                      defaultValue={finance.portal}
++                      className="h-10 w-full rounded-md border bg-background px-3 text-sm"
++                    >
++                      <option value="UPWORK">Upwork</option>
++                      <option value="FIVERR">Fiverr</option>
++                      <option value="DIRECT">Direct</option>
++                      <option value="OTHER">Other</option>
++                    </select>
++                  </div>
++
++                  <div className="grid gap-2 sm:grid-cols-2">
++                    <div className="grid gap-2">
++                      <label className="text-sm font-medium">Price (USD)</label>
++                      <Input
++                        name="priceUsd"
++                        inputMode="decimal"
++                        placeholder="e.g., 250"
++                        value={priceUsd}
++                        onChange={(e) => setPriceUsd(e.target.value)}
++                      />
++                    </div>
++                    <div className="grid gap-2">
++                      <label className="text-sm font-medium">Platform fee (%)</label>
++                      <Input
++                        name="platformFeePercent"
++                        inputMode="decimal"
++                        placeholder="e.g., 20"
++                        value={platformFeePercent}
++                        onChange={(e) => setPlatformFeePercent(e.target.value)}
++                      />
++                    </div>
++                  </div>
++                </>
++              )}
++
++              <div className="grid gap-2 sm:grid-cols-2">
++                <div className="grid gap-2">
++                  <label className="text-sm font-medium">Client name</label>
++                  <Input
++                    name="clientName"
++                    value={clientName}
++                    onChange={(e) => setClientName(e.target.value)}
++                  />
++                </div>
++                <div className="grid gap-2">
++                  <label className="text-sm font-medium">Client username</label>
++                  <Input
++                    name="clientUsername"
++                    value={clientUsername}
++                    onChange={(e) => setClientUsername(e.target.value)}
++                  />
++                </div>
++              </div>
++            </>
++          ) : (
++            <div className="text-sm text-muted-foreground space-y-1">
++              <div>Portal: {finance.portal}</div>
++              <div>Price (USD): {finance.priceUsd || "—"}</div>
++              <div>Platform fee (%): {finance.platformFeePercent || "—"}</div>
++              <div>
++                Client: {finance.clientName || "—"}
++                {finance.clientUsername ? ` (${finance.clientUsername})` : ""}
++              </div>
++            </div>
++          )}
++        </div>
++
+         <div className="flex flex-wrap items-center gap-2 pt-2">
+           <Button type="submit" disabled={pending}>
+             {pending ? "Saving..." : "Save Changes"}
+@@ -112,4 +226,4 @@ export default function EditProjectForm(props: {
+       </div>
+     </div>
+   );
+-}
+\ No newline at end of file
++}
