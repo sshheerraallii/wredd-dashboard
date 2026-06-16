@@ -48,10 +48,13 @@ function requireSuperAdmin(role: string) {
 function calcPoints(
   completedAt: Date,
   originalDueAt: Date,
+  dueAt: Date,        // ← add this
   timerHours: number
 ): number {
-  if (completedAt <= originalDueAt) return 10;
-  const lateMs = completedAt.getTime() - originalDueAt.getTime();
+  // If completed within the extended deadline → full points
+  if (completedAt <= dueAt) return 10;
+  // If completed late but within 2× the original timer → 6 pts
+  const lateMs = completedAt.getTime() - dueAt.getTime();
   const timerMs = timerHours * 60 * 60 * 1000;
   if (lateMs <= timerMs) return 6;
   return 3;
@@ -180,6 +183,7 @@ export async function completeOpsTaskInstance(
       assigneeId: true,
       status: true,
       originalDueAt: true,
+        dueAt: true,          // ← add this
       timerHours: true,
     },
   });
@@ -194,7 +198,12 @@ export async function completeOpsTaskInstance(
   }
 
   const now = new Date();
-  const points = calcPoints(now, instance.originalDueAt, instance.timerHours);
+ const points = calcPoints(
+  now,
+  instance.originalDueAt,
+  instance.dueAt,       // ← add this
+  instance.timerHours
+);
 
   await prisma.opsTaskInstance.update({
     where: { id: instanceId },
