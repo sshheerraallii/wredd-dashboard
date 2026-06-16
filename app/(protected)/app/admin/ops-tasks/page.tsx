@@ -139,7 +139,7 @@ export default async function AdminOpsTasksPage({
         (i) =>
           i.status === "COMPLETED" &&
           i.completedAt != null &&
-          i.completedAt > i.originalDueAt
+          i.completedAt > i.dueAt
       ).length;
       const pendingCount = instances.filter(
         (i) => i.status === "PENDING"

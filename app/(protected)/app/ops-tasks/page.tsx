@@ -67,7 +67,7 @@ export default async function OpsTasksPage({
     (i) =>
       i.status === "COMPLETED" &&
       i.completedAt != null &&
-      i.completedAt > i.originalDueAt
+      i.completedAt > i.dueAt
   ).length;
   const pendingThisMonth = monthInstances.filter(
     (i) => i.status === "PENDING"
