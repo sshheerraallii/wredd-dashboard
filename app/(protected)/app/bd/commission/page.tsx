@@ -182,7 +182,7 @@ export default async function BdCommissionPage({
   const rangeTo = Math.min(total, offset + rows.length);
 
   // Totals card for ACTIVE + CLEARING + DUE
-  const showTotalCard = tab === "ACTIVE" || tab === "DUE" || tab === "CLEARING";
+  const showTotalCard = tab === "ACTIVE" || tab === "DUE" || tab === "CLEARING" || tab === "PAID";
 
   const totalLabel =
     tab === "ACTIVE"
@@ -191,6 +191,8 @@ export default async function BdCommissionPage({
       ? "DUE total (PKR)"
       : tab === "CLEARING"
       ? "CLEARING total (PKR)"
+      : tab === "PAID"
+      ? "PAID total (PKR)"
       : "";
 
   const totalMonthLabel =

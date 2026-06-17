@@ -86,36 +86,36 @@ export async function getActiveBdProjectsWithEstimates(params: {
       : {}),
   };
 
-  const [total, rows] = await Promise.all([
-    prisma.project.count({ where }),
-    prisma.project.findMany({
-      where,
-      select: {
-        id: true,
-        title: true,
-        status: true,
-        createdAt: true,
-        bdOwner: { select: { id: true, fullName: true, username: true } },
-        finance: {
-          select: {
-            clientName: true,
-            clientUsername: true,
-            portal: true,
-            workType: true,
-            priceUsd: true,
-            platformFeePercent: true,
-            allowedHours: true,
-          },
+  // Fetch the full filtered set (ACTIVE projects are inherently bounded).
+  // Every matching project is estimated so the totals reflect ALL filtered
+  // rows (respecting bd/month/search), not just the current page.
+  const allRows = await prisma.project.findMany({
+    where,
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      createdAt: true,
+      bdOwner: { select: { id: true, fullName: true, username: true } },
+      finance: {
+        select: {
+          clientName: true,
+          clientUsername: true,
+          portal: true,
+          workType: true,
+          priceUsd: true,
+          platformFeePercent: true,
+          allowedHours: true,
         },
       },
-      orderBy: { createdAt: "desc" },
-      skip,
-      take: perPage,
-    }),
-  ]);
+    },
+    orderBy: { createdAt: "desc" },
+  });
 
-  const withEst = await Promise.all(
-    rows.map(async (p) => {
+  const total = allRows.length;
+
+  const allWithEst = await Promise.all(
+    allRows.map(async (p) => {
       const estimatedProfitPkr = await estimateActiveProfitPkr({
         projectId: p.id,
         finance: p.finance,
@@ -137,6 +137,14 @@ export async function getActiveBdProjectsWithEstimates(params: {
     })
   );
 
+  // Full-set estimated-profit total (null estimates are treated as 0).
+  const totalProfitPkr = allWithEst.reduce((sum, r) => {
+    const n = Number(r.estimatedProfitPkr ?? 0);
+    return Number.isFinite(n) ? sum + n : sum;
+  }, 0);
+
+  const withEst = allWithEst.slice(skip, skip + perPage);
+
   return {
     rows: withEst,
     total,
@@ -144,6 +152,8 @@ export async function getActiveBdProjectsWithEstimates(params: {
     perPage,
     monthKeyUsed: monthKey,
     hasConfig: !!config,
+    totals: { count: total, profitPkr: totalProfitPkr, bdPayoutPkr: 0, companySharePkr: 0 },
+    totalPayoutPkr: totalProfitPkr,
   };
 }
 
@@ -217,6 +227,32 @@ export async function getBdCommissionLedger(params: {
   ]);
 
   const total = countComm + countAdj;
+
+  // Full-set totals: aggregate over ALL filtered rows (respects tab + month +
+  // bd + search), independent of pagination. Adjustments contribute only to BD
+  // payout, mirroring the in-memory mapping (profit/companyShare = 0).
+  const [commAgg, adjAgg] = await Promise.all([
+    prisma.bdCommission.aggregate({
+      where: whereCommission,
+      _sum: { profitPkr: true, bdPayoutPkr: true, companySharePkr: true },
+    }),
+    prisma.bdCommissionAdjustment.aggregate({
+      where: whereAdj,
+      _sum: { amountPkr: true },
+    }),
+  ]);
+
+  const totalProfitPkr = Number(commAgg._sum.profitPkr ?? 0);
+  const totalCompanySharePkr = Number(commAgg._sum.companySharePkr ?? 0);
+  const totalBdPayoutPkr =
+    Number(commAgg._sum.bdPayoutPkr ?? 0) + Number(adjAgg._sum.amountPkr ?? 0);
+
+  const totals = {
+    count: total,
+    profitPkr: totalProfitPkr,
+    bdPayoutPkr: totalBdPayoutPkr,
+    companySharePkr: totalCompanySharePkr,
+  };
 
   // fetch enough to merge-sort, then slice
   const need = skip + perPage;
@@ -357,7 +393,7 @@ export async function getBdCommissionLedger(params: {
 
   const rows = merged.slice(skip, skip + perPage);
 
-  return { rows, total, page, perPage };
+  return { rows, total, page, perPage, totals, totalPayoutPkr: totalBdPayoutPkr };
 }
 
 /**

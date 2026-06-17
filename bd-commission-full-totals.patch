@@ -1,0 +1,203 @@
+diff --git a/app/(protected)/app/admin/bd-commission/page.tsx b/app/(protected)/app/admin/bd-commission/page.tsx
+index 0bf5314..a3f50d7 100644
+--- a/app/(protected)/app/admin/bd-commission/page.tsx
++++ b/app/(protected)/app/admin/bd-commission/page.tsx
+@@ -12,7 +12,7 @@ import {
+   getActiveBdProjectsWithEstimates,
+   getBdCommissionLedger,
+ } from "@/lib/bd-commission/queries";
+-import { sumCommissionTotals, fmtMoneyPkr } from "@/lib/bd-commission/totals";
++import { fmtMoneyPkr } from "@/lib/bd-commission/totals";
+ import { getPrisma } from "@/lib/prisma";
+ 
+ import {
+@@ -278,7 +278,7 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
+     }
+ 
+     rows = res.rows;
+-    totals = { count: rows.length, profitPkr: 0, bdPayoutPkr: 0, companySharePkr: 0 };
++    totals = res.totals;
+   } else {
+     if (!ledgerTab) {
+       totalCount = 0;
+@@ -313,7 +313,7 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
+       }
+ 
+       rows = res.rows;
+-      totals = sumCommissionTotals(rows);
++      totals = res.totals;
+     }
+   }
+ 
+@@ -466,12 +466,12 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
+       {/* Totals */}
+       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+         <div className="rounded border p-3">
+-          <div className="text-xs text-muted-foreground">Rows (this page)</div>
++          <div className="text-xs text-muted-foreground">Rows (total)</div>
+           <div className="text-lg font-semibold">{totals.count}</div>
+         </div>
+         <div className="rounded border p-3">
+-          <div className="text-xs text-muted-foreground">Profit (PKR)</div>
+-          <div className="text-lg font-semibold">{tab === "ACTIVE" ? "-" : fmtMoneyPkr(totals.profitPkr)}</div>
++          <div className="text-xs text-muted-foreground">{tab === "ACTIVE" ? "Profit (PKR, est.)" : "Profit (PKR)"}</div>
++          <div className="text-lg font-semibold">{fmtMoneyPkr(totals.profitPkr)}</div>
+         </div>
+         <div className="rounded border p-3">
+           <div className="text-xs text-muted-foreground">BD Payout (PKR)</div>
+diff --git a/app/(protected)/app/bd/commission/page.tsx b/app/(protected)/app/bd/commission/page.tsx
+index f016b64..93fb804 100644
+--- a/app/(protected)/app/bd/commission/page.tsx
++++ b/app/(protected)/app/bd/commission/page.tsx
+@@ -182,7 +182,7 @@ export default async function BdCommissionPage({
+   const rangeTo = Math.min(total, offset + rows.length);
+ 
+   // Totals card for ACTIVE + CLEARING + DUE
+-  const showTotalCard = tab === "ACTIVE" || tab === "DUE" || tab === "CLEARING";
++  const showTotalCard = tab === "ACTIVE" || tab === "DUE" || tab === "CLEARING" || tab === "PAID";
+ 
+   const totalLabel =
+     tab === "ACTIVE"
+@@ -191,6 +191,8 @@ export default async function BdCommissionPage({
+       ? "DUE total (PKR)"
+       : tab === "CLEARING"
+       ? "CLEARING total (PKR)"
++      : tab === "PAID"
++      ? "PAID total (PKR)"
+       : "";
+ 
+   const totalMonthLabel =
+diff --git a/lib/bd-commission/queries.ts b/lib/bd-commission/queries.ts
+index e723977..4514a61 100644
+--- a/lib/bd-commission/queries.ts
++++ b/lib/bd-commission/queries.ts
+@@ -86,36 +86,36 @@ export async function getActiveBdProjectsWithEstimates(params: {
+       : {}),
+   };
+ 
+-  const [total, rows] = await Promise.all([
+-    prisma.project.count({ where }),
+-    prisma.project.findMany({
+-      where,
+-      select: {
+-        id: true,
+-        title: true,
+-        status: true,
+-        createdAt: true,
+-        bdOwner: { select: { id: true, fullName: true, username: true } },
+-        finance: {
+-          select: {
+-            clientName: true,
+-            clientUsername: true,
+-            portal: true,
+-            workType: true,
+-            priceUsd: true,
+-            platformFeePercent: true,
+-            allowedHours: true,
+-          },
++  // Fetch the full filtered set (ACTIVE projects are inherently bounded).
++  // Every matching project is estimated so the totals reflect ALL filtered
++  // rows (respecting bd/month/search), not just the current page.
++  const allRows = await prisma.project.findMany({
++    where,
++    select: {
++      id: true,
++      title: true,
++      status: true,
++      createdAt: true,
++      bdOwner: { select: { id: true, fullName: true, username: true } },
++      finance: {
++        select: {
++          clientName: true,
++          clientUsername: true,
++          portal: true,
++          workType: true,
++          priceUsd: true,
++          platformFeePercent: true,
++          allowedHours: true,
+         },
+       },
+-      orderBy: { createdAt: "desc" },
+-      skip,
+-      take: perPage,
+-    }),
+-  ]);
++    },
++    orderBy: { createdAt: "desc" },
++  });
++
++  const total = allRows.length;
+ 
+-  const withEst = await Promise.all(
+-    rows.map(async (p) => {
++  const allWithEst = await Promise.all(
++    allRows.map(async (p) => {
+       const estimatedProfitPkr = await estimateActiveProfitPkr({
+         projectId: p.id,
+         finance: p.finance,
+@@ -137,6 +137,14 @@ export async function getActiveBdProjectsWithEstimates(params: {
+     })
+   );
+ 
++  // Full-set estimated-profit total (null estimates are treated as 0).
++  const totalProfitPkr = allWithEst.reduce((sum, r) => {
++    const n = Number(r.estimatedProfitPkr ?? 0);
++    return Number.isFinite(n) ? sum + n : sum;
++  }, 0);
++
++  const withEst = allWithEst.slice(skip, skip + perPage);
++
+   return {
+     rows: withEst,
+     total,
+@@ -144,6 +152,8 @@ export async function getActiveBdProjectsWithEstimates(params: {
+     perPage,
+     monthKeyUsed: monthKey,
+     hasConfig: !!config,
++    totals: { count: total, profitPkr: totalProfitPkr, bdPayoutPkr: 0, companySharePkr: 0 },
++    totalPayoutPkr: totalProfitPkr,
+   };
+ }
+ 
+@@ -218,6 +228,32 @@ export async function getBdCommissionLedger(params: {
+ 
+   const total = countComm + countAdj;
+ 
++  // Full-set totals: aggregate over ALL filtered rows (respects tab + month +
++  // bd + search), independent of pagination. Adjustments contribute only to BD
++  // payout, mirroring the in-memory mapping (profit/companyShare = 0).
++  const [commAgg, adjAgg] = await Promise.all([
++    prisma.bdCommission.aggregate({
++      where: whereCommission,
++      _sum: { profitPkr: true, bdPayoutPkr: true, companySharePkr: true },
++    }),
++    prisma.bdCommissionAdjustment.aggregate({
++      where: whereAdj,
++      _sum: { amountPkr: true },
++    }),
++  ]);
++
++  const totalProfitPkr = Number(commAgg._sum.profitPkr ?? 0);
++  const totalCompanySharePkr = Number(commAgg._sum.companySharePkr ?? 0);
++  const totalBdPayoutPkr =
++    Number(commAgg._sum.bdPayoutPkr ?? 0) + Number(adjAgg._sum.amountPkr ?? 0);
++
++  const totals = {
++    count: total,
++    profitPkr: totalProfitPkr,
++    bdPayoutPkr: totalBdPayoutPkr,
++    companySharePkr: totalCompanySharePkr,
++  };
++
+   // fetch enough to merge-sort, then slice
+   const need = skip + perPage;
+ 
+@@ -357,7 +393,7 @@ export async function getBdCommissionLedger(params: {
+ 
+   const rows = merged.slice(skip, skip + perPage);
+ 
+-  return { rows, total, page, perPage };
++  return { rows, total, page, perPage, totals, totalPayoutPkr: totalBdPayoutPkr };
+ }
+ 
+ /**

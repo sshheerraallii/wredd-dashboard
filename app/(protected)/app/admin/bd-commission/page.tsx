@@ -12,7 +12,7 @@ import {
   getActiveBdProjectsWithEstimates,
   getBdCommissionLedger,
 } from "@/lib/bd-commission/queries";
-import { sumCommissionTotals, fmtMoneyPkr } from "@/lib/bd-commission/totals";
+import { fmtMoneyPkr } from "@/lib/bd-commission/totals";
 import { getPrisma } from "@/lib/prisma";
 
 import {
@@ -278,7 +278,7 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
     }
 
     rows = res.rows;
-    totals = { count: rows.length, profitPkr: 0, bdPayoutPkr: 0, companySharePkr: 0 };
+    totals = res.totals;
   } else {
     if (!ledgerTab) {
       totalCount = 0;
@@ -313,7 +313,7 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
       }
 
       rows = res.rows;
-      totals = sumCommissionTotals(rows);
+      totals = res.totals;
     }
   }
 
@@ -466,12 +466,12 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
       {/* Totals */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="rounded border p-3">
-          <div className="text-xs text-muted-foreground">Rows (this page)</div>
+          <div className="text-xs text-muted-foreground">Rows (total)</div>
           <div className="text-lg font-semibold">{totals.count}</div>
         </div>
         <div className="rounded border p-3">
-          <div className="text-xs text-muted-foreground">Profit (PKR)</div>
-          <div className="text-lg font-semibold">{tab === "ACTIVE" ? "-" : fmtMoneyPkr(totals.profitPkr)}</div>
+          <div className="text-xs text-muted-foreground">{tab === "ACTIVE" ? "Profit (PKR, est.)" : "Profit (PKR)"}</div>
+          <div className="text-lg font-semibold">{fmtMoneyPkr(totals.profitPkr)}</div>
         </div>
         <div className="rounded border p-3">
           <div className="text-xs text-muted-foreground">BD Payout (PKR)</div>
