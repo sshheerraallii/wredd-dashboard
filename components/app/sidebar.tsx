@@ -76,6 +76,7 @@ function buildNavGroups(args: {
         items: [
           { href: "/app/admin/finance-config", label: "Finance Config" },
           { href: "/app/admin/bd-config", label: "BD Configs" },
+          { href: "/app/admin/targets", label: "BD Targets" },
           { href: "/app/admin/bd-commission", label: "BD Commission Ledger" },
         ],
       },
@@ -132,6 +133,7 @@ function buildNavGroups(args: {
           { href: "/app/admin/payments", label: "Payments Summary" },
           { href: "/app/admin/payments/worker", label: "Worker Payments" },
           { href: "/app/performance", label: "Performance" },
+          { href: "/app/bd/targets", label: "BD Targets" },
           
           { href: "/app/admin/ops-tasks", label: "Ops Tasks" },
 { href: "/app/ops-tasks", label: "My Tasks" },
@@ -162,6 +164,7 @@ function buildNavGroups(args: {
         title: "My Finance",
         defaultOpen: true,
         items: [
+          { href: "/app/bd/targets", label: "My Targets" },
           { href: "/app/bd/commission", label: "My Commission" },
         ],
       }

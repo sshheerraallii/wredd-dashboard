@@ -1,0 +1,219 @@
+diff --git a/app/(protected)/app/admin/targets/actions.ts b/app/(protected)/app/admin/targets/actions.ts
+index 90cf904..f93808d 100644
+--- a/app/(protected)/app/admin/targets/actions.ts
++++ b/app/(protected)/app/admin/targets/actions.ts
+@@ -5,6 +5,7 @@ import { z } from "zod";
+ import { redirect } from "next/navigation";
+ import { requireRole } from "@/lib/guards";
+ import { getPrisma } from "@/lib/prisma";
++import { computeTargets } from "@/lib/bd-targets/compute";
+ 
+ const prisma = getPrisma();
+ 
+@@ -126,3 +127,49 @@ export async function saveAllocations(formData: FormData) {
+ 
+   backOk(monthKey, "Allocations saved.");
+ }
++
++/** Freeze target + achieved per department for the month (closed book). Manual only. */
++export async function snapshotMonth(formData: FormData) {
++  const user = await requireRole(["SUPER_ADMIN"]);
++
++  const mk = MonthKeySchema.safeParse(String(formData.get("monthKey") ?? "").trim());
++  if (!mk.success) backErr(String(formData.get("monthKey") ?? ""), mk.error.issues[0]?.message ?? "invalid monthKey");
++  const monthKey = mk.data as string;
++
++  const comp = await computeTargets(monthKey);
++  const rows = comp.departments.filter((d) => d.deptId);
++  if (rows.length === 0) backErr(monthKey, "No departments to snapshot. Set up Animations and Video Editing first.");
++
++  const now = new Date();
++  const snapshotById = (user?.id as string) ?? null;
++
++  await prisma.$transaction(
++    rows.map((d) =>
++      prisma.bdTargetSnapshot.upsert({
++        where: { monthKey_departmentId: { monthKey, departmentId: d.deptId as string } },
++        create: {
++          monthKey,
++          departmentId: d.deptId as string,
++          departmentName: d.name,
++          targetPoints: d.capacityPoints,
++          targetUsd: d.targetUsd,
++          achievedUsd: d.buckets.achievedUsd,
++          dollarsPerPoint: 6,
++          snapshotAt: now,
++          snapshotById,
++        },
++        update: {
++          departmentName: d.name,
++          targetPoints: d.capacityPoints,
++          targetUsd: d.targetUsd,
++          achievedUsd: d.buckets.achievedUsd,
++          dollarsPerPoint: 6,
++          snapshotAt: now,
++          snapshotById,
++        },
++      })
++    )
++  );
++
++  backOk(monthKey, "Month snapshotted (target + achieved frozen).");
++}
+diff --git a/app/(protected)/app/admin/targets/page.tsx b/app/(protected)/app/admin/targets/page.tsx
+index a6ff998..effeab4 100644
+--- a/app/(protected)/app/admin/targets/page.tsx
++++ b/app/(protected)/app/admin/targets/page.tsx
+@@ -2,10 +2,10 @@
+ import { requireRole } from "@/lib/guards";
+ import { getPrisma } from "@/lib/prisma";
+ import { SYSTEM_BD_KEY, SYSTEM_BD_EMAIL } from "@/lib/bd-commission/constants";
+-import { openMonth, saveWorkingDays } from "./actions";
++import { openMonth, saveWorkingDays, snapshotMonth } from "./actions";
+ import AllocationEditor from "./_components/allocation-editor";
+ import { computeTargets } from "@/lib/bd-targets/compute";
+-import { Headline, DeptCard, BdTable } from "@/components/bd-targets/ui";
++import { Headline, DeptCard, BdTable, SnapshotHistory } from "@/components/bd-targets/ui";
+ 
+ const prisma = getPrisma();
+ 
+@@ -98,6 +98,21 @@ export default async function BdTargetsPage({
+   // Live dashboard computation for the headline + breakdown.
+   const comp = await computeTargets(selected);
+ 
++  // Snapshot history (closed-book) + this month's snapshot status.
++  const snapshotRows = await prisma.bdTargetSnapshot.findMany({
++    orderBy: [{ monthKey: "desc" }, { departmentName: "asc" }],
++    select: { monthKey: true, departmentName: true, targetUsd: true, achievedUsd: true, snapshotAt: true },
++  });
++  const selectedSnapshotAt =
++    snapshotRows.find((r) => r.monthKey === selected)?.snapshotAt ?? null;
++  const historyRows = snapshotRows.map((r) => ({
++    monthKey: r.monthKey,
++    departmentName: r.departmentName,
++    targetUsd: Number(r.targetUsd?.toString?.() ?? r.targetUsd ?? 0),
++    achievedUsd: Number(r.achievedUsd?.toString?.() ?? r.achievedUsd ?? 0),
++    snapshotAt: r.snapshotAt.toISOString(),
++  }));
++
+   // Month list for the picker (union of allocation + finance months).
+   const [allocMonths, cfgMonths] = await Promise.all([
+     prisma.bdDepartmentAllocation.findMany({ select: { monthKey: true }, distinct: ["monthKey"] }),
+@@ -207,6 +222,26 @@ export default async function BdTargetsPage({
+               <div className="text-[11px] text-amber-700">Not set for {selected} — runway can&apos;t be computed yet.</div>
+             ) : null}
+           </div>
++
++          <div className="rounded-2xl border bg-card p-4 space-y-3">
++            <div className="text-sm font-medium">Snapshot</div>
++            <p className="text-xs text-muted-foreground">
++              Freeze this month&apos;s target &amp; achieved (closed book). Re-snapshot to refresh.
++            </p>
++            <form action={snapshotMonth}>
++              <input type="hidden" name="monthKey" value={selected} />
++              <button className="w-full rounded-xl border px-3 py-2 text-sm hover:bg-muted">
++                {selectedSnapshotAt ? "Re-snapshot this month" : "Snapshot this month"}
++              </button>
++            </form>
++            {selectedSnapshotAt ? (
++              <div className="text-[11px] text-muted-foreground">
++                Last snapshot: {new Date(selectedSnapshotAt).toISOString().slice(0, 16).replace("T", " ")} UTC
++              </div>
++            ) : (
++              <div className="text-[11px] text-muted-foreground">Not snapshotted yet.</div>
++            )}
++          </div>
+         </div>
+ 
+         {/* Right: allocation editor */}
+@@ -227,6 +262,12 @@ export default async function BdTargetsPage({
+           )}
+         </div>
+       </div>
++
++      {/* ── Snapshot history (closed book) ───────────────────────────── */}
++      <div className="space-y-2">
++        <h2 className="text-sm font-medium">Snapshot history</h2>
++        <SnapshotHistory rows={historyRows} fx={comp.fx} />
++      </div>
+     </div>
+   );
+ }
+diff --git a/components/bd-targets/ui.tsx b/components/bd-targets/ui.tsx
+index 4d84bc9..c103a24 100644
+--- a/components/bd-targets/ui.tsx
++++ b/components/bd-targets/ui.tsx
+@@ -209,3 +209,73 @@ export function BdDeptCard({ slice, fx }: { slice: BdResult["perDept"][number];
+     </div>
+   );
+ }
++
++export type SnapshotRow = {
++  monthKey: string;
++  departmentName: string;
++  targetUsd: number;
++  achievedUsd: number;
++  snapshotAt: string; // ISO
++};
++
++export function SnapshotHistory({ rows, fx }: { rows: SnapshotRow[]; fx: number }) {
++  if (rows.length === 0) {
++    return (
++      <div className="rounded-2xl border p-4 text-sm text-muted-foreground">
++        No snapshots yet. Use “Snapshot this month” to freeze a month&apos;s target and achieved.
++      </div>
++    );
++  }
++  // Group by month (rows already sorted month desc, dept asc).
++  const months: string[] = [];
++  for (const r of rows) if (!months.includes(r.monthKey)) months.push(r.monthKey);
++
++  return (
++    <div className="rounded-2xl border overflow-hidden">
++      <div className="overflow-x-auto">
++        <table className="min-w-[640px] w-full text-sm">
++          <thead className="bg-muted">
++            <tr className="text-left">
++              <th className="p-3">Month</th>
++              <th className="p-3">Department</th>
++              <th className="p-3 text-right">Target</th>
++              <th className="p-3 text-right">Achieved</th>
++              <th className="p-3 text-right">% hit</th>
++            </tr>
++          </thead>
++          <tbody>
++            {months.flatMap((mk) => {
++              const group = rows.filter((r) => r.monthKey === mk);
++              return group.map((r, i) => {
++                const pct = r.targetUsd > 0 ? Math.round((r.achievedUsd / r.targetUsd) * 100) : null;
++                return (
++                  <tr key={`${mk}:${r.departmentName}`} className="border-t align-top">
++                    {i === 0 ? (
++                      <td className="p-3 font-medium" rowSpan={group.length}>
++                        {mk}
++                      </td>
++                    ) : null}
++                    <td className="p-3">{r.departmentName}</td>
++                    <td className="p-3 text-right tabular-nums">
++                      <Money usd={r.targetUsd} fx={fx} />
++                    </td>
++                    <td className="p-3 text-right tabular-nums">
++                      <Money usd={r.achievedUsd} fx={fx} />
++                    </td>
++                    <td className="p-3 text-right tabular-nums">
++                      {pct == null ? (
++                        <span className="text-muted-foreground">—</span>
++                      ) : (
++                        <span className={pct >= 100 ? "text-emerald-700" : "text-[#8F4043]"}>{pct}%</span>
++                      )}
++                    </td>
++                  </tr>
++                );
++              });
++            })}
++          </tbody>
++        </table>
++      </div>
++    </div>
++  );
++}

@@ -55,6 +55,8 @@ model User {
   watchedProjects           ProjectWatcher[]
   departments               UserDepartment[]
   invitesCreated            UserInvite[]             @relation("InviteCreatedBy")
+  bdAllocations             BdDepartmentAllocation[] @relation("BdAllocationBd")
+  targetSnapshotsTaken      BdTargetSnapshot[]       @relation("SnapshotBy")
 
   @@index([role])
   @@index([workerType])
@@ -69,6 +71,7 @@ model MonthlyFinanceConfig {
   fxRate                 Decimal   @db.Decimal(12, 4)
   avgOnsiteHourCostPkr   Int
   remoteOverheadFixedPkr Int
+  workingDays            Int?
   finalizedAt            DateTime?
   notes                  String?
   createdAt              DateTime  @default(now())
@@ -76,6 +79,47 @@ model MonthlyFinanceConfig {
 
   @@index([monthKey])
   @@index([finalizedAt])
+}
+
+/// BD revenue-target allocation: each BD's % share of a department's monthly
+/// capacity target. Sums to 100% per (monthKey, department). System BD included.
+/// New months copy-forward from the most recent prior month, then editable.
+model BdDepartmentAllocation {
+  id           String     @id @default(cuid())
+  monthKey     String
+  bdId         String
+  departmentId String
+  sharePercent Decimal    @db.Decimal(5, 2)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  bd           User       @relation("BdAllocationBd", fields: [bdId], references: [id], onDelete: Cascade)
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+
+  @@unique([monthKey, bdId, departmentId])
+  @@index([monthKey])
+  @@index([bdId])
+  @@index([departmentId])
+}
+
+/// Closed-book month snapshot: freezes Target + Achieved at department level so
+/// later salary/point changes or project deletions never rewrite history.
+/// Manual only (Super Admin presses snapshot). Department name denormalized so
+/// the record is self-contained. Per-BD history = targetUsd x stored allocation.
+model BdTargetSnapshot {
+  id              String     @id @default(cuid())
+  monthKey        String
+  departmentId    String
+  departmentName  String
+  targetPoints    Int
+  targetUsd       Decimal    @db.Decimal(14, 2)
+  achievedUsd     Decimal    @db.Decimal(14, 2)
+  dollarsPerPoint Int        @default(6)
+  snapshotAt      DateTime   @default(now())
+  snapshotById    String?
+  snapshotBy      User?      @relation("SnapshotBy", fields: [snapshotById], references: [id])
+
+  @@unique([monthKey, departmentId])
+  @@index([monthKey])
 }
 
 model Department {
@@ -87,6 +131,7 @@ model Department {
   projects          Project[]
   users             UserDepartment[]
   inviteDepartments UserInviteDepartment[]
+  bdAllocations     BdDepartmentAllocation[]
 }
 
 model UserDepartment {
