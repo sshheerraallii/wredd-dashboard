@@ -1,0 +1,18 @@
+diff --git a/app/(protected)/app/admin/targets/page.tsx b/app/(protected)/app/admin/targets/page.tsx
+--- a/app/(protected)/app/admin/targets/page.tsx
++++ b/app/(protected)/app/admin/targets/page.tsx
+@@ -1,2 +1,5 @@
+ // app/(protected)/app/admin/targets/page.tsx
++export const dynamic = "force-dynamic";
++export const revalidate = 0;
++
+ import { requireRole } from "@/lib/guards";
+diff --git a/app/(protected)/app/bd/targets/page.tsx b/app/(protected)/app/bd/targets/page.tsx
+--- a/app/(protected)/app/bd/targets/page.tsx
++++ b/app/(protected)/app/bd/targets/page.tsx
+@@ -1,2 +1,5 @@
+ // app/(protected)/app/bd/targets/page.tsx
++export const dynamic = "force-dynamic";
++export const revalidate = 0;
++
+ import { requireRole } from "@/lib/guards";

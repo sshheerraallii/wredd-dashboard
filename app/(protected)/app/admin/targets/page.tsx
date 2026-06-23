@@ -1,4 +1,7 @@
 // app/(protected)/app/admin/targets/page.tsx
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 import { requireRole } from "@/lib/guards";
 import { getPrisma } from "@/lib/prisma";
 import { SYSTEM_BD_KEY, SYSTEM_BD_EMAIL } from "@/lib/bd-commission/constants";

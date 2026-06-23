@@ -1,4 +1,7 @@
 // app/(protected)/app/bd/targets/page.tsx
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 import { requireRole } from "@/lib/guards";
 import { computeTargets } from "@/lib/bd-targets/compute";
 import { Headline, DeptCard, BdTable, BdDeptCard } from "@/components/bd-targets/ui";
