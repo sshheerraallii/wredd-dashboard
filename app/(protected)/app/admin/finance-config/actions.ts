@@ -7,6 +7,7 @@ import { readSession } from "@/lib/auth";
 import { getPrisma } from "@/lib/prisma";
 import { BdCommissionTab } from "@prisma/client";
 import { upsertBdCommissionForProject } from "@/lib/bd-commission/upsert-bd-commission";
+import { setOnsiteConstants } from "@/lib/onsite-points/settings";
 
 const prisma = getPrisma();
 
@@ -283,6 +284,50 @@ export async function recalculateMonth(formData: FormData) {
   redirect(
     `/app/admin/finance-config?monthKey=${encodeURIComponent(monthKey)}&ok=1&msg=${encodeURIComponent(
       `Recalculated ${recalcCount} commission row${recalcCount !== 1 ? "s" : ""} for ${monthKey}.`
+    )}`
+  );
+}
+// ─────────────────────────────────────────────────────────────────────────────
+// Global onsite-points constants (productionMultiple, dollarsPerPoint)
+// These are NOT per-month — they live in SystemSetting and drive the calculators
+// and estimated-points math everywhere. Changes apply going forward only
+// (existing assignments keep their snapshotted values).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const OnsiteConstantsSchema = z.object({
+  productionMultiple: z.coerce
+    .number()
+    .positive("Production Multiple must be greater than 0")
+    .max(100, "Production Multiple looks too large"),
+  dollarsPerPoint: z.coerce
+    .number()
+    .int("Dollars Per Point must be a whole number")
+    .positive("Dollars Per Point must be greater than 0")
+    .max(1000, "Dollars Per Point looks too large"),
+});
+
+export async function updateOnsiteConstants(formData: FormData) {
+  const { user } = await readSession();
+  requireSuperAdmin(user?.role);
+
+  const parsed = OnsiteConstantsSchema.safeParse({
+    productionMultiple: formData.get("productionMultiple"),
+    dollarsPerPoint: formData.get("dollarsPerPoint"),
+  });
+
+  if (!parsed.success) {
+    const msg = parsed.error.issues[0]?.message ?? "Invalid values";
+    redirect(`/app/admin/finance-config?err=${encodeURIComponent(msg)}`);
+  }
+
+  await setOnsiteConstants({
+    productionMultiple: parsed.data.productionMultiple,
+    dollarsPerPoint: parsed.data.dollarsPerPoint,
+  });
+
+  redirect(
+    `/app/admin/finance-config?ok=1&msg=${encodeURIComponent(
+      "Onsite points constants saved. Applies to new assignments going forward."
     )}`
   );
 }

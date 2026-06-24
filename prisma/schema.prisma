@@ -57,6 +57,8 @@ model User {
   invitesCreated            UserInvite[]             @relation("InviteCreatedBy")
   bdAllocations             BdDepartmentAllocation[] @relation("BdAllocationBd")
   targetSnapshotsTaken      BdTargetSnapshot[]       @relation("SnapshotBy")
+  manualPerfPoints          ManualPerformancePoint[] @relation("ManualPerfUser")
+  manualPerfPointsCreated   ManualPerformancePoint[] @relation("ManualPerfCreatedBy")
 
   @@index([role])
   @@index([workerType])
@@ -173,6 +175,11 @@ model Project {
   /// *
   ///    * ---- Immutable first completion ----
   firstCompletedAt                 DateTime?
+  /// *
+  ///    * ---- First delivery (set once, when status first becomes DELIVERED) ----
+  ///    * Used to distinguish a first-pass IN_PROGRESS (30% estimate) from a
+  ///    * post-delivery REVISION / bounce-back (70% estimate).
+  firstDeliveredAt                 DateTime?
   /// *
   ///    * ---- Creator ----
   createdById                      String
@@ -316,6 +323,13 @@ model ProjectAssignment {
   outcome              AssignmentOutcome @default(ACTIVE)
   allocatedHours       Int?
   hoursLate            Int?
+  /// *
+  ///    * ---- Estimated-points constant snapshots (going-forward-only) ----
+  ///    * Captured when allocatedHours is set, so editing the global constants
+  ///    * later never retroactively changes an existing project's estimate.
+  ///    * Null on legacy rows -> reader falls back to current global settings.
+  prodMultipleSnapshot    Decimal? @db.Decimal(6, 2)
+  dollarsPerPointSnapshot Int?
   assignedBy           User?             @relation("AssignmentAssignedBy", fields: [assignedById], references: [id])
   project              Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user                 User              @relation("AssignmentUser", fields: [userId], references: [id], onDelete: Cascade)
@@ -429,6 +443,27 @@ model OnsitePointCredit {
   @@index([userId, monthKey])
   @@index([projectId])
   @@index([setById])
+}
+
+/// Manual performance points awarded by Manager / Super Admin for things the
+/// project-points system can't capture (attitude, extra effort, a fine, etc.).
+/// - points may be NEGATIVE (a fine) or positive (a bonus).
+/// - note is REQUIRED (why the adjustment was made).
+/// - FINALIZED-only: counts toward target progress, never shown as estimated.
+/// - attributed to the month it was GIVEN (monthKey), independent of any project.
+model ManualPerformancePoint {
+  id          String   @id @default(cuid())
+  userId      String
+  points      Int
+  note        String
+  monthKey    String
+  createdById String?
+  createdAt   DateTime @default(now())
+  user        User     @relation("ManualPerfUser", fields: [userId], references: [id], onDelete: Cascade)
+  createdBy   User?    @relation("ManualPerfCreatedBy", fields: [createdById], references: [id])
+
+  @@index([userId, monthKey])
+  @@index([createdById])
 }
 
 model UserInvite {

@@ -2,8 +2,9 @@
 import { redirect } from "next/navigation";
 import { readSession } from "@/lib/auth";
 import { getPrisma } from "@/lib/prisma";
-import { createMonth, finalizeMonth, updateMonth } from "./actions";
+import { createMonth, finalizeMonth, updateMonth, updateOnsiteConstants } from "./actions";
 import { UnfinalizeButton, RecalculateButton } from "./month-action-buttons";
+import { getOnsiteConstants } from "@/lib/onsite-points/settings";
 
 const prisma = getPrisma();
 
@@ -42,6 +43,8 @@ export default async function FinanceConfigPage({
   const all = await prisma.monthlyFinanceConfig.findMany({
     orderBy: { monthKey: "desc" },
   });
+
+  const onsiteConstants = await getOnsiteConstants();
 
   const selected = searchParams.monthKey ?? all[0]?.monthKey ?? nowMonthKeyUTC();
   const row = all.find((x) => x.monthKey === selected) ?? null;
@@ -250,6 +253,75 @@ export default async function FinanceConfigPage({
             </form>
           )}
         </div>
+      </div>
+
+      {/* ── Global onsite-points constants (not per-month) ── */}
+      <div className="rounded-2xl border bg-card p-4 space-y-4">
+        <div>
+          <div className="text-sm font-medium">Onsite Points Constants (Global)</div>
+          <p className="text-xs text-muted-foreground">
+            These are not tied to a month. They drive the animator / video
+            calculators and the automatic estimated-points shown on active
+            projects. Changes apply <strong>going forward only</strong> —
+            projects already in progress keep the values they were assigned with.
+          </p>
+        </div>
+
+        <form action={updateOnsiteConstants} className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-1">
+              <label className="text-xs font-medium">Production Multiple</label>
+              <input
+                name="productionMultiple"
+                type="number"
+                step="0.01"
+                min="0.01"
+                defaultValue={onsiteConstants.productionMultiple}
+                className="w-full rounded-xl border bg-background px-3 py-2 text-sm"
+                placeholder="e.g. 3"
+              />
+              <p className="text-[11px] leading-relaxed text-muted-foreground">
+                How many times a worker&apos;s raw hourly cost a project must
+                bill to be worth doing. <strong>3 = a project must earn 3× what
+                the worker costs you.</strong> This turns a cost-hour into a
+                billable price. Lower it → projects count for fewer points; raise
+                it → more points. Based on 8 years of animation data. Used by: the
+                calculators, estimated points on active projects, and monthly
+                target-point math. Changes apply going forward only.
+              </p>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-medium">Dollars Per Point (USD)</label>
+              <input
+                name="dollarsPerPoint"
+                type="number"
+                step="1"
+                min="1"
+                defaultValue={onsiteConstants.dollarsPerPoint}
+                className="w-full rounded-xl border bg-background px-3 py-2 text-sm"
+                placeholder="e.g. 6"
+              />
+              <p className="text-[11px] leading-relaxed text-muted-foreground">
+                The revenue value of one point: <strong>1 point = $6 of billable
+                project value.</strong> Converts a project&apos;s billable price
+                into points. Lower it → the same project is worth more points;
+                raise it → fewer. Used by: the calculators, estimated points, and
+                monthly target points. Changes apply going forward only and
+                rescale all future point numbers — change with care.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="text-xs text-muted-foreground">
+              Saving updates both values together, everywhere they&apos;re used.
+            </div>
+            <button className="rounded-xl border px-4 py-2 text-sm hover:bg-muted">
+              Save constants
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
