@@ -245,11 +245,24 @@ function pct(part: number, whole: number) {
 // MAIN COMPONENT
 // ---------------------------------------------------------------------------
 
-export function AnimatorCalculator({ animators }: { animators: Animator[] }) {
+export function AnimatorCalculator({
+  animators,
+  dbConstants,
+}: {
+  animators: Animator[];
+  dbConstants: { productionMultiple: number; dollarsPerPoint: number };
+}) {
   const [activeTool, setActiveTool] = useState<ActiveTool>("salary_to_points");
 
   // --- Shared constants (both tools use these) ---
-  const [constants, setConstants] = useState<Constants>(DEFAULT_CONSTANTS);
+  // productionMultiple + dollarsPerPoint are GLOBAL (set in Finance Config) and
+  // seeded from the DB here — they are read-only on this page. The remaining
+  // knobs (fxRate, workingDays, effectiveHoursPerDay) stay local + localStorage.
+  const [constants, setConstants] = useState<Constants>({
+    ...DEFAULT_CONSTANTS,
+    productionMultiple: dbConstants.productionMultiple,
+    dollarsPerPoint: dbConstants.dollarsPerPoint,
+  });
   const [constantsOpen, setConstantsOpen] = useState(false);
 
   // Load saved constants from localStorage on mount
@@ -258,12 +271,13 @@ export function AnimatorCalculator({ animators }: { animators: Animator[] }) {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<Constants>;
+        // Note: productionMultiple + dollarsPerPoint are intentionally NOT
+        // loaded from localStorage — they come from the DB (Finance Config).
         setConstants((prev) => ({
+          ...prev,
           workingDays:          parsed.workingDays          ?? prev.workingDays,
           effectiveHoursPerDay: parsed.effectiveHoursPerDay ?? prev.effectiveHoursPerDay,
-          dollarsPerPoint:      parsed.dollarsPerPoint      ?? prev.dollarsPerPoint,
           fxRate:               parsed.fxRate               ?? prev.fxRate,
-          productionMultiple:   parsed.productionMultiple   ?? prev.productionMultiple,
         }));
       }
     } catch {
@@ -280,7 +294,12 @@ export function AnimatorCalculator({ animators }: { animators: Animator[] }) {
   }, []);
 
   const resetConstants = () => {
-    setConstants(DEFAULT_CONSTANTS);
+    setConstants({
+      ...DEFAULT_CONSTANTS,
+      // Keep the global (DB-sourced) values; only local knobs reset.
+      productionMultiple: dbConstants.productionMultiple,
+      dollarsPerPoint: dbConstants.dollarsPerPoint,
+    });
     try { localStorage.removeItem(STORAGE_KEY); } catch {}
   };
 
@@ -355,10 +374,13 @@ export function AnimatorCalculator({ animators }: { animators: Animator[] }) {
         {constantsOpen && (
           <div className="border-t px-5 py-4 space-y-4">
             <p className="text-xs text-muted-foreground">
-              These are saved in your browser. <strong>FX Rate</strong> should be updated
-              monthly. <strong>Production Multiple</strong> (default 3×) is based on 8 years
-              of real animation project data — a $300 project takes ~25 working hours on average.
-              Only change it if your project economics fundamentally shift.
+              <strong>FX Rate</strong>, working days and hours/day are saved in your
+              browser for what-if math. <strong>Production Multiple</strong> and{" "}
+              <strong>$ per Point</strong> are global business constants set in{" "}
+              <a href="/app/admin/finance-config" className="underline hover:text-foreground">
+                Finance Config
+              </a>{" "}
+              — shown here read-only so this calculator always matches the live values.
             </p>
 
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
@@ -376,18 +398,18 @@ export function AnimatorCalculator({ animators }: { animators: Animator[] }) {
                 <span className="text-xs text-muted-foreground">Default: 270</span>
               </label>
 
-              {/* Production Multiple — the 3× from real data */}
+              {/* Production Multiple — global, set in Finance Config (read-only) */}
               <label className="block">
                 <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
                   Production Multiple
                 </span>
-                <input
-                  type="number" min={1} step={0.1}
-                  value={constants.productionMultiple}
-                  onChange={(e) => updateConstants({ productionMultiple: parseFloat(e.target.value) || DEFAULT_CONSTANTS.productionMultiple })}
-                  className="mt-1.5 w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-muted-foreground/30"
-                />
-                <span className="text-xs text-muted-foreground">Default: 3× (real avg)</span>
+                <div className="mt-1.5 w-full rounded-lg border bg-muted/40 px-3 py-2 text-sm flex items-center justify-between">
+                  <span className="font-medium">{constants.productionMultiple}×</span>
+                  <a href="/app/admin/finance-config" className="text-xs text-muted-foreground underline hover:text-foreground">
+                    Finance Config
+                  </a>
+                </div>
+                <span className="text-xs text-muted-foreground">Global · read-only</span>
               </label>
 
               {/* Working days */}
@@ -418,18 +440,18 @@ export function AnimatorCalculator({ animators }: { animators: Animator[] }) {
                 <span className="text-xs text-muted-foreground">Default: 6.5</span>
               </label>
 
-              {/* $ per point */}
+              {/* $ per point — global, set in Finance Config (read-only) */}
               <label className="block">
                 <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
                   $ per Point
                 </span>
-                <input
-                  type="number" min={1} step={0.5}
-                  value={constants.dollarsPerPoint}
-                  onChange={(e) => updateConstants({ dollarsPerPoint: parseFloat(e.target.value) || DEFAULT_CONSTANTS.dollarsPerPoint })}
-                  className="mt-1.5 w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-muted-foreground/30"
-                />
-                <span className="text-xs text-muted-foreground">Default: $6</span>
+                <div className="mt-1.5 w-full rounded-lg border bg-muted/40 px-3 py-2 text-sm flex items-center justify-between">
+                  <span className="font-medium">${constants.dollarsPerPoint}</span>
+                  <a href="/app/admin/finance-config" className="text-xs text-muted-foreground underline hover:text-foreground">
+                    Finance Config
+                  </a>
+                </div>
+                <span className="text-xs text-muted-foreground">Global · read-only</span>
               </label>
             </div>
 

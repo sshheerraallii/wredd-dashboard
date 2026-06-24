@@ -142,9 +142,20 @@ function workerTypeLabel(wt: string | null) {
 // MAIN COMPONENT
 // ---------------------------------------------------------------------------
 
-export function RenderCalculator({ workers }: { workers: Worker[] }) {
-  // --- Constants state (persisted to localStorage) ---
-  const [constants, setConstants] = useState<Constants>(DEFAULT_CONSTANTS);
+export function RenderCalculator({
+  workers,
+  dbDollarsPerPoint,
+}: {
+  workers: Worker[];
+  dbDollarsPerPoint: number;
+}) {
+  // --- Constants state ---
+  // dollarsPerPoint is GLOBAL (set in Finance Config), seeded from the DB and
+  // read-only here. workingDays + effectiveHoursPerDay stay local + localStorage.
+  const [constants, setConstants] = useState<Constants>({
+    ...DEFAULT_CONSTANTS,
+    dollarsPerPoint: dbDollarsPerPoint,
+  });
   const [constantsOpen, setConstantsOpen] = useState(false);
 
   // Load saved constants from localStorage on mount
@@ -153,10 +164,11 @@ export function RenderCalculator({ workers }: { workers: Worker[] }) {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<Constants>;
+        // dollarsPerPoint intentionally NOT loaded — it comes from the DB.
         setConstants((prev) => ({
+          ...prev,
           workingDays: parsed.workingDays ?? prev.workingDays,
           effectiveHoursPerDay: parsed.effectiveHoursPerDay ?? prev.effectiveHoursPerDay,
-          dollarsPerPoint: parsed.dollarsPerPoint ?? prev.dollarsPerPoint,
         }));
       }
     } catch {
@@ -176,7 +188,10 @@ export function RenderCalculator({ workers }: { workers: Worker[] }) {
   }, []);
 
   const resetConstants = () => {
-    setConstants(DEFAULT_CONSTANTS);
+    setConstants({
+      ...DEFAULT_CONSTANTS,
+      dollarsPerPoint: dbDollarsPerPoint, // keep the global value
+    });
     try {
       localStorage.removeItem(STORAGE_KEY);
     } catch {}
@@ -320,22 +335,18 @@ export function RenderCalculator({ workers }: { workers: Worker[] }) {
                 <span className="text-xs text-muted-foreground">Default: 6.5 (real productive hours)</span>
               </label>
 
-              {/* Dollars per point */}
+              {/* Dollars per point — global, set in Finance Config (read-only) */}
               <label className="block">
                 <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
                   $ per Point
                 </span>
-                <input
-                  type="number"
-                  min={1}
-                  step={0.5}
-                  value={constants.dollarsPerPoint}
-                  onChange={(e) =>
-                    updateConstants({ dollarsPerPoint: parseFloat(e.target.value) || DEFAULT_CONSTANTS.dollarsPerPoint })
-                  }
-                  className="mt-1.5 w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-muted-foreground/30"
-                />
-                <span className="text-xs text-muted-foreground">Default: $6 (1 point = $6 value)</span>
+                <div className="mt-1.5 w-full rounded-lg border bg-muted/40 px-3 py-2 text-sm flex items-center justify-between">
+                  <span className="font-medium">${constants.dollarsPerPoint}</span>
+                  <a href="/app/admin/finance-config" className="text-xs text-muted-foreground underline hover:text-foreground">
+                    Finance Config
+                  </a>
+                </div>
+                <span className="text-xs text-muted-foreground">Global · read-only (1 point = ${constants.dollarsPerPoint} value)</span>
               </label>
             </div>
 

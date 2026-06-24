@@ -31,6 +31,7 @@ export const runtime = "nodejs";
 import { redirect } from "next/navigation";
 import { readSession } from "@/lib/auth";
 import { getPrisma } from "@/lib/prisma";
+import { getOnsiteConstants } from "@/lib/onsite-points/settings";
 import { AnimatorCalculator } from "./_components/animator-calculator";
 
 const prisma = getPrisma();
@@ -72,6 +73,9 @@ export default async function AnimatorCalculatorPage() {
     orderBy: { fullName: "asc" },
   });
 
+  // Global onsite-points constants (single source of truth, set in Finance Config).
+  const onsiteConstants = await getOnsiteConstants();
+
   return (
     <div className="p-6 max-w-5xl mx-auto">
       <div className="mb-8">
@@ -87,7 +91,7 @@ export default async function AnimatorCalculatorPage() {
         </p>
       </div>
 
-      <AnimatorCalculator animators={animators} />
+      <AnimatorCalculator animators={animators} dbConstants={onsiteConstants} />
     </div>
   );
 }

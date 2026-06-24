@@ -14,6 +14,7 @@ export const runtime = "nodejs";
 import { redirect } from "next/navigation";
 import { readSession } from "@/lib/auth";
 import { getPrisma } from "@/lib/prisma";
+import { getOnsiteConstants } from "@/lib/onsite-points/settings";
 import { RenderCalculator } from "./_components/render-calculator";
 
 const prisma = getPrisma();
@@ -47,6 +48,9 @@ export default async function CalculatorPage() {
     orderBy: { fullName: "asc" },
   });
 
+  // Global $ per point (single source of truth, set in Finance Config).
+  const onsiteConstants = await getOnsiteConstants();
+
   return (
     <div className="p-6 max-w-5xl mx-auto">
       {/* Page header */}
@@ -59,7 +63,7 @@ export default async function CalculatorPage() {
       </div>
 
       {/* Client-side interactive calculator */}
-      <RenderCalculator workers={workers} />
+      <RenderCalculator workers={workers} dbDollarsPerPoint={onsiteConstants.dollarsPerPoint} />
     </div>
   );
 }

@@ -10,6 +10,7 @@ import type { PrismaClient } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import { requireRole } from "@/lib/guards";
 import { notify } from "@/lib/notify";
+import { getOnsiteConstants } from "@/lib/onsite-points/settings";
 
 const prisma = getPrisma();
 
@@ -314,6 +315,11 @@ export async function assignWorkerToProject(input: z.infer<typeof AssignSchema>)
     }
   }
 
+  // Snapshot the global onsite constants at the moment hours are set, so a later
+  // edit to the globals never retroactively changes this project's estimate
+  // ("going forward only"). Remote assignments get no snapshot.
+  const constSnapshot = isRemote ? null : await getOnsiteConstants();
+
   await prisma.$transaction(async (tx) => {
     // assignment upsert
     await tx.projectAssignment.upsert({
@@ -332,6 +338,10 @@ export async function assignWorkerToProject(input: z.infer<typeof AssignSchema>)
 
         // ✅ per-worker hours (onsite only)
         allocatedHours: isRemote ? null : (allocatedHours ?? null),
+
+        // ✅ constant snapshots (onsite only) — going-forward-only estimate basis
+        prodMultipleSnapshot: constSnapshot ? constSnapshot.productionMultiple : null,
+        dollarsPerPointSnapshot: constSnapshot ? constSnapshot.dollarsPerPoint : null,
       },
       update: {
         assignedById: actorId ?? null,
@@ -343,6 +353,10 @@ export async function assignWorkerToProject(input: z.infer<typeof AssignSchema>)
 
         // ✅ update hours in case admin is re-assigning with a different value
         allocatedHours: isRemote ? null : (allocatedHours ?? null),
+
+        // ✅ re-assigning with new hours refreshes the snapshot deliberately
+        prodMultipleSnapshot: constSnapshot ? constSnapshot.productionMultiple : null,
+        dollarsPerPointSnapshot: constSnapshot ? constSnapshot.dollarsPerPoint : null,
       },
     });
 

@@ -187,6 +187,7 @@ export async function setProjectStatus(args: {
         id: true,
         status: true,
         firstCompletedAt: true,
+        firstDeliveredAt: true,
         remotePrice: true, // legacy fallback only
         timerRunning: true,
         timerLastResumedAt: true,
@@ -239,6 +240,12 @@ export async function setProjectStatus(args: {
     const completionPatch: { firstCompletedAt?: Date } = {};
     if (isFirstCompletion) completionPatch.firstCompletedAt = now;
 
+    // First delivery — set once, used to distinguish a first-pass IN_PROGRESS
+    // (30% estimate) from a post-delivery REVISION / bounce-back (70% estimate).
+    const isFirstDelivery = nextStatus === "DELIVERED" && !fresh.firstDeliveredAt;
+    const deliveryPatch: { firstDeliveredAt?: Date } = {};
+    if (isFirstDelivery) deliveryPatch.firstDeliveredAt = now;
+
     await tx.project.update({
       where: { id: projectId },
       data: {
@@ -247,6 +254,7 @@ export async function setProjectStatus(args: {
         cancelledAt: nextStatus === "CANCELLED" ? now : null,
         ...timerPatch,
         ...completionPatch,
+        ...deliveryPatch,
       },
     });
 

@@ -10,6 +10,8 @@ import { MonthGroups, type MonthGroup } from "./_components/month-groups";
 import { getWorkerAssignmentStats } from "@/lib/worker-stats/assignments";
 import { computeCommitmentIndex } from "@/lib/worker-stats/commitment-index";
 import { CommitmentIndexCard } from "@/components/app/commitment-index";
+import { getUserEstimatedPoints } from "@/lib/onsite-points/aggregate";
+import { EstimatedPointsPanel } from "@/components/app/estimated-points-panel";
 
 const prisma = getPrisma();
 
@@ -627,6 +629,8 @@ const completed =
       }
     }
 
+    const estimatedSummary = await getUserEstimatedPoints(userId);
+
     return (
       <div className="p-6 space-y-5">
         <div className="flex items-start justify-between gap-4">
@@ -666,7 +670,7 @@ const completed =
           </div>
 
           <div className="rounded-xl border bg-card p-4">
-            <div className="text-xs text-muted-foreground">Performance Points</div>
+            <div className="text-xs text-muted-foreground">Finalized Points</div>
             <div className="mt-1 text-2xl font-semibold">{pts.achievedPoints}</div>
             <div className="mt-1 text-xs text-muted-foreground">
               Accuracy: {accuracy != null ? `${accuracy}%` : "—"} • Target{" "}
@@ -676,6 +680,9 @@ const completed =
             </div>
           </div>
         </div>
+
+        {/* Live estimated layer — only meaningful for active projects right now */}
+        <EstimatedPointsPanel summary={estimatedSummary} />
 
         {period === "monthly" ? (
           <div className="rounded-xl border bg-card p-4 space-y-3">
