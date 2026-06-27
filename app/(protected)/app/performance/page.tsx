@@ -14,6 +14,9 @@ import { computeCommitmentIndex, computeMultipleCommitmentIndexes } from "@/lib/
 import type { CommitmentIndex } from "@/lib/worker-stats/commitment-index";
 import { getEstimatedForUsers, getUserEstimatedPoints } from "@/lib/onsite-points/aggregate";
 import { EstimatedPointsPanel } from "@/components/app/estimated-points-panel";
+import { sumManualForUser, listManualForUser } from "@/lib/onsite-points/manual";
+import { ManualPointsDialog } from "./_components/manual-points-dialog";
+import { addManualPerformancePoint, deleteManualPerformancePoint } from "./actions";
 import { CommitmentBadge, CommitmentIndexCard } from "@/components/app/commitment-index";
 
 const prisma = getPrisma();
@@ -352,8 +355,18 @@ async function onsitePointsForUser(
     _count: { _all: true },
   });
 
+  // Fold in manual ± performance points (same scope) — they count toward the
+  // finalized total and therefore accuracy.
+  const manual = await sumManualForUser(userId, {
+    ...(period === "monthly" ? { monthKey } : {}),
+  });
+
+  const projectPoints = agg._sum.points ?? 0;
+
   return {
-    achievedPoints: agg._sum.points ?? 0,
+    achievedPoints: projectPoints + manual,
+    projectPoints,
+    manualPoints: manual,
     creditedProjects: agg._count._all ?? 0,
   };
 }
@@ -734,6 +747,9 @@ export default async function PerformancePage({
   const role = session.user.role as Role | undefined;
   await requireAdminLike(role);
 
+  // Only Super Admin / Manager can add or remove manual points (BD sees them read-only).
+  const canManageManual = role === "SUPER_ADMIN" || role === "MANAGER";
+
   const tab = parseTab(searchParams?.tab);
   const period = parsePeriod(searchParams?.period);
 
@@ -954,9 +970,15 @@ export default async function PerformancePage({
       completionRate,
       ratingAvg,
       achievedPoints: pts.achievedPoints,
+      projectPoints: pts.projectPoints,
+      manualPoints: pts.manualPoints,
       creditedProjects: pts.creditedProjects,
       accuracy,
       estimatedSummary: await getUserEstimatedPoints(selectedOnsite.id),
+      manualEntries: await listManualForUser(
+        selectedOnsite.id,
+        period === "monthly" ? { monthKey: mk } : {}
+      ),
     };
   }
 
@@ -1551,7 +1573,13 @@ const k = monthKeyOf(new Date(l.payableOn));
                   </div>
                   <div className="text-xs text-muted-foreground">
                     {period === "monthly"
-                      ? `Achieved ${onsiteEmployee.achievedPoints} • Target ${onsiteEmployee.targetMonthlyPoints}`
+                      ? `Achieved ${onsiteEmployee.achievedPoints}${
+                          onsiteEmployee.manualPoints
+                            ? ` (${onsiteEmployee.projectPoints} project ${
+                                onsiteEmployee.manualPoints > 0 ? "+" : "−"
+                              } ${Math.abs(onsiteEmployee.manualPoints)} manual)`
+                            : ""
+                        } • Target ${onsiteEmployee.targetMonthlyPoints}`
                       : "Overall accuracy = avg of monthly accuracies (excluding current month)"}
                   </div>
                 </div>
@@ -1561,6 +1589,75 @@ const k = monthKeyOf(new Date(l.payableOn));
               {onsiteEmployee.estimatedSummary && (
                 <EstimatedPointsPanel summary={onsiteEmployee.estimatedSummary} />
               )}
+
+              {/* Manual ± performance points (Manager / Super Admin) */}
+              <div className="rounded-xl border bg-card p-4 space-y-3">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="text-sm font-medium">Manual Points</div>
+                    <div className="text-xs text-muted-foreground">
+                      ± adjustments with a note. Counts toward finalized points
+                      &amp; accuracy, in the month given.
+                      {period !== "monthly" ? " Showing all-time entries." : ` Showing ${mk}.`}
+                    </div>
+                  </div>
+                  {canManageManual ? (
+                    <ManualPointsDialog
+                      userId={onsiteEmployee.id}
+                      period={period}
+                      monthKey={mk}
+                      action={addManualPerformancePoint}
+                    />
+                  ) : null}
+                </div>
+
+                {onsiteEmployee.manualEntries.length === 0 ? (
+                  <div className="text-xs text-muted-foreground">
+                    No manual entries{period === "monthly" ? ` for ${mk}` : ""} yet.
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {onsiteEmployee.manualEntries.map((m: any) => (
+                      <div
+                        key={m.id}
+                        className="flex items-center justify-between gap-3 rounded-lg border bg-background px-3 py-2 text-sm"
+                      >
+                        <div className="min-w-0">
+                          <div className="truncate">{m.note}</div>
+                          <div className="text-[11px] text-muted-foreground">
+                            {m.monthKey}
+                            {m.createdByName ? ` • by ${m.createdByName}` : ""}
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <span
+                            className={`font-semibold ${
+                              m.points < 0
+                                ? "text-red-600 dark:text-red-400"
+                                : "text-emerald-700 dark:text-emerald-400"
+                            }`}
+                          >
+                            {m.points > 0 ? `+${m.points}` : m.points}
+                          </span>
+                          {canManageManual ? (
+                            <form action={deleteManualPerformancePoint}>
+                              <input type="hidden" name="id" value={m.id} />
+                              <input type="hidden" name="userId" value={onsiteEmployee.id} />
+                              <input type="hidden" name="period" value={period} />
+                              <button
+                                type="submit"
+                                className="text-[11px] text-muted-foreground underline hover:text-red-600"
+                              >
+                                delete
+                              </button>
+                            </form>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               {period === "monthly" ? (
                 <>

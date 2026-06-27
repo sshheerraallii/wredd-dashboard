@@ -12,6 +12,7 @@ import { computeCommitmentIndex } from "@/lib/worker-stats/commitment-index";
 import { CommitmentIndexCard } from "@/components/app/commitment-index";
 import { getUserEstimatedPoints } from "@/lib/onsite-points/aggregate";
 import { EstimatedPointsPanel } from "@/components/app/estimated-points-panel";
+import { sumManualForUser } from "@/lib/onsite-points/manual";
 
 const prisma = getPrisma();
 
@@ -444,8 +445,14 @@ const completed =
         _sum: { points: true },
         _count: { _all: true },
       });
+      const manual = await sumManualForUser(userId, {
+        ...(period === "monthly" ? { monthKey: mk } : {}),
+      });
+      const projectPoints = agg._sum.points ?? 0;
       return {
-        achievedPoints: agg._sum.points ?? 0,
+        achievedPoints: projectPoints + manual,
+        projectPoints,
+        manualPoints: manual,
         creditedProjects: agg._count._all ?? 0,
       };
     })();
@@ -678,6 +685,13 @@ const completed =
                 ? "prorated monthly"
                 : "avg of monthly accuracies (prorated)"}
             </div>
+            {pts.manualPoints ? (
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                Includes {pts.manualPoints > 0 ? "+" : "−"}
+                {Math.abs(pts.manualPoints)} manual point
+                {Math.abs(pts.manualPoints) === 1 ? "" : "s"} ({pts.projectPoints} from projects)
+              </div>
+            ) : null}
           </div>
         </div>
 
