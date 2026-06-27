@@ -12,6 +12,8 @@ import { MonthGroups, type MonthGroup } from "./_components/month-groups";
 import { getMultipleWorkerStats, getWorkerAssignmentStats } from "@/lib/worker-stats/assignments";
 import { computeCommitmentIndex, computeMultipleCommitmentIndexes } from "@/lib/worker-stats/commitment-index";
 import type { CommitmentIndex } from "@/lib/worker-stats/commitment-index";
+import { getEstimatedForUsers, getUserEstimatedPoints } from "@/lib/onsite-points/aggregate";
+import { EstimatedPointsPanel } from "@/components/app/estimated-points-panel";
 import { CommitmentBadge, CommitmentIndexCard } from "@/components/app/commitment-index";
 
 const prisma = getPrisma();
@@ -762,6 +764,9 @@ export default async function PerformancePage({
     const statsMap = await getMultipleWorkerStats(pagedUsers.map((u) => u.id));
     const indexMap = computeMultipleCommitmentIndexes(statsMap);
 
+    // Batch estimated (live) points for all users on this page — one pass.
+    const estMap = await getEstimatedForUsers(pagedUsers.map((u) => u.id));
+
     onsiteSummaryRows = await Promise.all(
       pagedUsers.map(async (u) => {
         const { completed, cancelled } = await completionStatsForUser(
@@ -802,6 +807,7 @@ export default async function PerformancePage({
           ratingAvg,
           achievedPoints: pts.achievedPoints,
           accuracy,
+          estimatedPoints: estMap.get(u.id)?.totalEstimatedPoints ?? 0,
           commitmentIndex: indexMap.get(u.id) ?? null,
         };
       })
@@ -950,6 +956,7 @@ export default async function PerformancePage({
       achievedPoints: pts.achievedPoints,
       creditedProjects: pts.creditedProjects,
       accuracy,
+      estimatedSummary: await getUserEstimatedPoints(selectedOnsite.id),
     };
   }
 
@@ -1428,7 +1435,8 @@ const k = monthKeyOf(new Date(l.payableOn));
                   <th className="py-2 text-left">Type</th>
                   <th className="py-2 text-right">Completion</th>
                   <th className="py-2 text-right">Avg Rating</th>
-                  <th className="py-2 text-right">Points</th>
+                  <th className="py-2 text-right">Finalized</th>
+                  <th className="py-2 text-right">Est. (live)</th>
                   <th className="py-2 text-right">Accuracy</th>
                   <th className="py-2 text-right">Commitment</th>
                 </tr>
@@ -1450,6 +1458,9 @@ const k = monthKeyOf(new Date(l.payableOn));
                       {r.ratingAvg != null ? r.ratingAvg.toFixed(1) : "—"}
                     </td>
                     <td className="py-2 text-right">{r.achievedPoints}</td>
+                    <td className="py-2 text-right text-muted-foreground">
+                      {r.estimatedPoints > 0 ? `~${r.estimatedPoints}` : "—"}
+                    </td>
                     <td className="py-2 text-right">
                       {r.accuracy != null ? `${r.accuracy}%` : "—"}
                     </td>
@@ -1545,6 +1556,11 @@ const k = monthKeyOf(new Date(l.payableOn));
                   </div>
                 </div>
               </div>
+
+              {/* Live estimated layer for this worker (current active projects) */}
+              {onsiteEmployee.estimatedSummary && (
+                <EstimatedPointsPanel summary={onsiteEmployee.estimatedSummary} />
+              )}
 
               {period === "monthly" ? (
                 <>
