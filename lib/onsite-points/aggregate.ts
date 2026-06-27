@@ -191,3 +191,115 @@ export async function getUserEstimatedPoints(
     }
   );
 }
+
+export type ProjectEstimateLine = {
+  userId: string;
+  fullName: string;
+  allocatedHours: number | null;
+  basePoints: number;
+  estimatedPoints: number;
+  stateFactor: number;
+  computable: boolean;
+};
+
+export type ProjectEstimate = {
+  /** True when the project is in an estimate-eligible state. */
+  eligible: boolean;
+  status: ProjectStatus;
+  lines: ProjectEstimateLine[];
+  fxRate: number;
+  fxMissing: boolean;
+};
+
+/**
+ * Per-onsite-worker estimated points for a SINGLE project. Used on the project
+ * page. Returns eligible=false (and no lines) once the project is finalized
+ * (COMPLETED) or cancelled — at that point the project page shows the finalized
+ * numbers instead.
+ */
+export async function getProjectEstimate(
+  projectId: string,
+  opts?: { monthKey?: string; now?: Date }
+): Promise<ProjectEstimate> {
+  const now = opts?.now ?? new Date();
+  const monthKey = opts?.monthKey ?? currentMonthKeyUTC(now);
+
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { status: true, firstDeliveredAt: true, firstCompletedAt: true },
+  });
+
+  if (!project) {
+    return { eligible: false, status: "UNASSIGNED", lines: [], fxRate: 0, fxMissing: true };
+  }
+
+  const status = project.status as ProjectStatus;
+  if (!ESTIMATE_STATES.includes(status)) {
+    return { eligible: false, status, lines: [], fxRate: 0, fxMissing: true };
+  }
+
+  const [globals, fxRate] = await Promise.all([
+    getOnsiteConstants(),
+    resolveFx(monthKey),
+  ]);
+  const everDelivered = resolveEverDelivered({
+    firstDeliveredAt: project.firstDeliveredAt,
+    firstCompletedAt: project.firstCompletedAt,
+    status,
+  });
+
+  const assignments = await prisma.projectAssignment.findMany({
+    where: {
+      projectId,
+      unassignedAt: null,
+      outcome: { not: "CANCELLED" as any },
+    },
+    select: {
+      userId: true,
+      allocatedHours: true,
+      prodMultipleSnapshot: true,
+      dollarsPerPointSnapshot: true,
+      user: {
+        select: { fullName: true, workerType: true, onsiteHourRatePkr: true },
+      },
+    },
+  });
+
+  const lines: ProjectEstimateLine[] = [];
+  for (const a of assignments) {
+    if (!String(a.user.workerType ?? "").startsWith("ONSITE_")) continue;
+
+    const consts = effectiveConstants(
+      {
+        prodMultipleSnapshot:
+          a.prodMultipleSnapshot != null ? num(a.prodMultipleSnapshot) : null,
+        dollarsPerPointSnapshot: a.dollarsPerPointSnapshot ?? null,
+      },
+      globals
+    );
+
+    const r = estimatePoints(
+      {
+        allocatedHours: a.allocatedHours,
+        onsiteHourRatePkr: a.user.onsiteHourRatePkr ?? null,
+        fxRate,
+        productionMultiple: consts.productionMultiple,
+        dollarsPerPoint: consts.dollarsPerPoint,
+      },
+      status,
+      everDelivered
+    );
+
+    lines.push({
+      userId: a.userId,
+      fullName: a.user.fullName,
+      allocatedHours: a.allocatedHours,
+      basePoints: r.basePoints,
+      estimatedPoints: r.estimatedPoints,
+      stateFactor: r.stateFactor,
+      computable: r.computable,
+    });
+  }
+
+  return { eligible: true, status, lines, fxRate, fxMissing: fxRate <= 0 };
+}

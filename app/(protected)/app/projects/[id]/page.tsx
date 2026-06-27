@@ -11,6 +11,7 @@ import { StatusControls } from "./_components/status-controls";
 import { ProjectChat } from "./_components/project-chat";
 import { RatingCard } from "./_components/rating-card";
 import { OnsiteFinalizeCard } from "./_components/onsite-finalize-card";
+import { getProjectEstimate } from "@/lib/onsite-points/aggregate";
 import { WatchToggle } from "./_components/watch-toggle";
 import { DeliverDialog } from "./_components/deliver-dialog";
 import { markSeenForUser } from "@/lib/actions/mark-seen";
@@ -333,6 +334,21 @@ export default async function ProjectPage({ params }: { params: { id: string } }
       : project.onsitePointsManual != null
         ? `${suggestedPoints} pts (manual)`
         : `${suggestedPoints + extra} pts (class${extra ? ` +${extra}` : ""})`;
+
+  // ── Estimated points for THIS project (live, pre-finalization) ──
+  // Admins/BD see every onsite worker's estimate; an onsite worker sees only
+  // their own line. Skipped entirely for non-onsite projects / non-eligible viewers.
+  const canSeeEstimate = isAdminLike || role === "ONSITE_EMPLOYEE";
+  const projectEstimate =
+    canSeeEstimate && onsiteAssigned.length > 0
+      ? await getProjectEstimate(project.id)
+      : null;
+  const estimateLines =
+    projectEstimate?.eligible
+      ? isAdminLike
+        ? projectEstimate.lines
+        : projectEstimate.lines.filter((l) => l.userId === userId)
+      : [];
 
   // ✅ Financials gate (SUPER_ADMIN / MANAGER / BUSINESS_DEVELOPER / BD)
   const canViewFinancials =
@@ -674,6 +690,64 @@ deadlineHours={project.deadlineHours ?? null}
               </div>
             </div>
           ) : null}
+        </div>
+      ) : null}
+
+      {estimateLines.length > 0 ? (
+        <div className="rounded-lg border border-dashed p-4 space-y-3">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-sm font-medium">
+                Estimated Points (live)
+              </div>
+              <div className="text-xs text-muted-foreground">
+                Subject to change · finalizes when this project completes
+              </div>
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {projectEstimate?.status === "DELIVERED"
+                ? "Delivered · 100%"
+                : projectEstimate?.status === "REVISION"
+                  ? "In revision · 70%"
+                  : "In progress · 30%"}
+            </div>
+          </div>
+
+          {projectEstimate?.fxMissing ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300">
+              No FX rate is set for this month yet, so these estimates are approximate.
+            </div>
+          ) : null}
+
+          <div className="space-y-1.5">
+            {estimateLines.map((l) => (
+              <div
+                key={l.userId}
+                className="flex items-center justify-between gap-3 rounded-lg border bg-background px-3 py-2 text-sm"
+              >
+                <div className="min-w-0">
+                  <div className="truncate font-medium">{l.fullName}</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {l.allocatedHours != null ? `${l.allocatedHours}h allocated` : "no hours set"}
+                  </div>
+                </div>
+                <div className="shrink-0 text-right">
+                  <div className="font-semibold">
+                    {!l.computable
+                      ? "—"
+                      : l.estimatedPoints === 0
+                        ? "<1 pt"
+                        : `${l.estimatedPoints} pt${l.estimatedPoints === 1 ? "" : "s"}`}
+                  </div>
+                  {l.computable && l.basePoints > 0 ? (
+                    <div className="text-[11px] text-muted-foreground">
+                      of {l.basePoints} full
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       ) : null}
 
