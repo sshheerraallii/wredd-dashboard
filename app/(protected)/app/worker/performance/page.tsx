@@ -12,7 +12,7 @@ import { computeCommitmentIndex } from "@/lib/worker-stats/commitment-index";
 import { CommitmentIndexCard } from "@/components/app/commitment-index";
 import { getUserEstimatedPoints } from "@/lib/onsite-points/aggregate";
 import { EstimatedPointsPanel } from "@/components/app/estimated-points-panel";
-import { sumManualForUser } from "@/lib/onsite-points/manual";
+import { sumManualForUser, sumManualByMonth } from "@/lib/onsite-points/manual";
 
 const prisma = getPrisma();
 
@@ -479,9 +479,13 @@ const completed =
       const sums: Record<string, number> = {};
       for (const c of credits) sums[c.monthKey] = (sums[c.monthKey] ?? 0) + c.points;
 
-      // ✅ Only include months where the worker actually had credited projects.
-      // Months with no activity (no OnsitePointCredit rows) are excluded from
-      // the average — it's unfair to count a month where no projects were assigned.
+      // Fold in manual ± points per month (manual-only month counts as activity).
+      const manualByMonth = await sumManualByMonth(userId, monthKeys);
+      for (const [k, v] of manualByMonth) sums[k] = (sums[k] ?? 0) + v;
+
+      // ✅ Only include months where the worker actually had activity.
+      // Months with no activity (no credits and no manual) are excluded from
+      // the average — it's unfair to count a month where nothing happened.
       const monthsWithActivity = new Set(Object.keys(sums));
 
       const accuracies: number[] = [];
@@ -521,6 +525,16 @@ const completed =
       const or = r.project.onsiteRating as any;
       if (or)
         grouped[r.monthKey].ratings.push((or.m1 + or.m2 + or.m3 + or.m4 + or.m5) / 5);
+    }
+
+    // Fold manual ± points into each displayed month (incl. manual-only months).
+    const histManualByMonth = await sumManualByMonth(
+      userId,
+      months.map((m) => m.key)
+    );
+    for (const [k, v] of histManualByMonth) {
+      if (!grouped[k]) grouped[k] = { points: 0, ratings: [] };
+      grouped[k].points += v;
     }
 
     const history = months.map((m) => {

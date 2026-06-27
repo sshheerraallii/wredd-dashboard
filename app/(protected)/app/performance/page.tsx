@@ -14,7 +14,7 @@ import { computeCommitmentIndex, computeMultipleCommitmentIndexes } from "@/lib/
 import type { CommitmentIndex } from "@/lib/worker-stats/commitment-index";
 import { getEstimatedForUsers, getUserEstimatedPoints } from "@/lib/onsite-points/aggregate";
 import { EstimatedPointsPanel } from "@/components/app/estimated-points-panel";
-import { sumManualForUser, listManualForUser } from "@/lib/onsite-points/manual";
+import { sumManualForUser, sumManualByMonth, listManualForUser } from "@/lib/onsite-points/manual";
 import { ManualPointsDialog } from "./_components/manual-points-dialog";
 import { addManualPerformancePoint, deleteManualPerformancePoint } from "./actions";
 import { CommitmentBadge, CommitmentIndexCard } from "@/components/app/commitment-index";
@@ -497,7 +497,11 @@ async function onsiteMonthlyAccuracyAvg(params: {
   const sums: Record<string, number> = {};
   for (const c of credits) sums[c.monthKey] = (sums[c.monthKey] ?? 0) + c.points;
 
-  // ✅ Only include months with actual credited projects
+  // Fold in manual ± points per month (a manual-only month counts as activity).
+  const manualByMonth = await sumManualByMonth(params.userId, monthKeys);
+  for (const [k, v] of manualByMonth) sums[k] = (sums[k] ?? 0) + v;
+
+  // ✅ Only include months with actual activity (credits or manual)
   const monthsWithActivity = new Set(Object.keys(sums));
 
   const accuracies: number[] = [];
@@ -593,8 +597,17 @@ async function onsitePointsForMonthKeys(params: {
     _count: { _all: true },
   });
 
+  // Fold in manual ± points across the same months.
+  const manualByMonth = await sumManualByMonth(params.userId, params.monthKeys);
+  let manual = 0;
+  for (const v of manualByMonth.values()) manual += v;
+
+  const projectPoints = agg._sum.points ?? 0;
+
   return {
-    achievedPoints: agg._sum.points ?? 0,
+    achievedPoints: projectPoints + manual,
+    projectPoints,
+    manualPoints: manual,
     creditedProjects: agg._count._all ?? 0,
   };
 }
@@ -644,7 +657,11 @@ async function onsiteAccuracyAvgForMonthKeys(params: {
   const sums: Record<string, number> = {};
   for (const c of credits) sums[c.monthKey] = (sums[c.monthKey] ?? 0) + c.points;
 
-  // ✅ Only include months with actual credited projects
+  // Fold in manual ± points per month (manual-only month counts as activity).
+  const manualByMonth = await sumManualByMonth(params.userId, params.monthKeys);
+  for (const [k, v] of manualByMonth) sums[k] = (sums[k] ?? 0) + v;
+
+  // ✅ Only include months with actual activity (credits or manual)
   const monthsWithActivity = new Set(Object.keys(sums));
 
   const accuracies: number[] = [];
