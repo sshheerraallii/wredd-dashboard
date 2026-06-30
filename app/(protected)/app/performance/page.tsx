@@ -9,6 +9,13 @@ import { PaginationNav } from "./_components/pagination";
 import { EmployeeProjectsTable } from "./_components/employee-projects-table";
 import { MonthRangeFilter } from "./_components/month-range-filter";
 import { MonthPicker } from "./_components/month-picker";
+import { DateRangeFilter } from "./_components/date-range-filter";
+import {
+  getDateRangePerformance,
+  getDateRangeProjectBreakdown,
+  type DateRangeRow,
+  type ProjectBreakdownRow,
+} from "@/lib/onsite-points/date-range";
 import { MonthGroups, type MonthGroup } from "./_components/month-groups";
 import { getMultipleWorkerStats, getWorkerAssignmentStats } from "@/lib/worker-stats/assignments";
 import { computeCommitmentIndex, computeMultipleCommitmentIndexes } from "@/lib/worker-stats/commitment-index";
@@ -34,7 +41,8 @@ type Tab =
   | "onsite_summary"
   | "onsite_employee"
   | "remote_summary"
-  | "remote_employee";
+  | "remote_employee"
+  | "date_range";
 
 type Period = "monthly" | "overall";
 
@@ -43,6 +51,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "onsite_employee", label: "Onsite — Employee" },
   { key: "remote_summary", label: "Remote — Summary" },
   { key: "remote_employee", label: "Remote — Employee" },
+  { key: "date_range", label: "Date Range" },
 ];
 
 function parseTab(input?: string): Tab {
@@ -50,6 +59,7 @@ function parseTab(input?: string): Tab {
   if (t === "onsite_employee") return "onsite_employee";
   if (t === "remote_summary") return "remote_summary";
   if (t === "remote_employee") return "remote_employee";
+  if (t === "date_range") return "date_range";
   return "onsite_summary";
 }
 
@@ -758,6 +768,8 @@ export default async function PerformancePage({
     from?: string;
     to?: string;
     month?: string;
+    start?: string;
+    end?: string;
   };
 }) {
   const session = await readSession();
@@ -1464,6 +1476,37 @@ const k = monthKeyOf(new Date(l.payableOn));
     return `/app/performance?${params.toString()}`;
   }
 
+  // ---------- Date Range tab (single employee) ----------
+  let drStart = (searchParams?.start || "").trim();
+  let drEnd = (searchParams?.end || "").trim();
+  let dateRangeRow: DateRangeRow | null = null;
+  let dateRangeBreakdown: ProjectBreakdownRow[] | null = null;
+  let drSelectedUser: { id: string; fullName: string } | null = null;
+  let drValidDates = false;
+
+  if (tab === "date_range") {
+    const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+    drValidDates = dateRe.test(drStart) && dateRe.test(drEnd) && drStart <= drEnd;
+
+    const su = selectedUserId
+      ? onsiteUsers.find((u) => u.id === selectedUserId) ?? null
+      : null;
+    if (su) drSelectedUser = { id: su.id, fullName: su.fullName };
+
+    if (drValidDates && su) {
+      const startDate = new Date(`${drStart}T00:00:00.000Z`);
+      const endDate = new Date(`${drEnd}T23:59:59.999Z`);
+
+      const rows = await getDateRangePerformance(
+        [{ id: su.id, fullName: su.fullName, targetMonthlyPoints: su.targetMonthlyPoints }],
+        startDate,
+        endDate
+      );
+      dateRangeRow = rows[0] ?? null;
+      dateRangeBreakdown = await getDateRangeProjectBreakdown(su.id, startDate, endDate);
+    }
+  }
+
   return (
     <div className="p-6 space-y-5">
       <div className="flex items-start justify-between gap-4">
@@ -1474,7 +1517,7 @@ const k = monthKeyOf(new Date(l.payableOn));
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {period === "monthly" ? (
+          {tab !== "date_range" && period === "monthly" ? (
             <MonthPicker
               monthKeys={pickerMonths}
               current={mk}
@@ -1482,7 +1525,7 @@ const k = monthKeyOf(new Date(l.payableOn));
               userId={selectedUserId || undefined}
             />
           ) : null}
-          <PeriodSwitch tab={tab} period={period} />
+          {tab !== "date_range" ? <PeriodSwitch tab={tab} period={period} /> : null}
         </div>
       </div>
 
@@ -1973,6 +2016,122 @@ const k = monthKeyOf(new Date(l.payableOn));
               )}
             </div>
           )}
+        </div>
+      ) : null}
+
+      {/* ── DATE RANGE (single employee) ── */}
+      {tab === "date_range" ? (
+        <div className="space-y-4">
+          <div>
+            <div className="text-sm font-medium">Date Range Performance</div>
+            <p className="text-xs text-muted-foreground">
+              Points and accuracy for one employee over a custom date span. Target
+              is each month&apos;s points pro-rated by its configured working days.
+              Project points count by completion date; manual points by date given.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <EmployeePickerDialog
+              title="Select onsite employee"
+              users={onsiteUsers.map((u) => ({ id: u.id, fullName: u.fullName }))}
+              hrefBase={`/app/performance?tab=date_range&start=${encodeURIComponent(
+                drStart
+              )}&end=${encodeURIComponent(drEnd)}&userId=`}
+            />
+            <div className="text-sm">
+              {drSelectedUser ? (
+                <span className="font-medium">{drSelectedUser.fullName}</span>
+              ) : (
+                <span className="text-muted-foreground">No employee selected</span>
+              )}
+            </div>
+          </div>
+
+          <DateRangeFilter
+            start={drStart}
+            end={drEnd}
+            userId={selectedUserId || undefined}
+          />
+
+          {!drSelectedUser || !drValidDates ? (
+            <div className="rounded-xl border bg-card p-6 text-sm text-muted-foreground">
+              Select an employee and a From / To date, then press Generate.
+            </div>
+          ) : dateRangeRow ? (
+            <>
+              <div className="grid gap-3 md:grid-cols-4">
+                <div className="rounded-xl border bg-card p-4">
+                  <div className="text-xs text-muted-foreground">Achieved Points</div>
+                  <div className="mt-1 text-2xl font-semibold">
+                    {dateRangeRow.achievedPoints}
+                  </div>
+                  <div className="mt-1 text-[11px] text-muted-foreground">
+                    {dateRangeRow.projectPoints} project
+                    {dateRangeRow.manualPoints !== 0
+                      ? ` ${dateRangeRow.manualPoints > 0 ? "+" : "−"} ${Math.abs(
+                          dateRangeRow.manualPoints
+                        )} manual`
+                      : ""}
+                  </div>
+                </div>
+                <div className="rounded-xl border bg-card p-4">
+                  <div className="text-xs text-muted-foreground">Target</div>
+                  <div className="mt-1 text-2xl font-semibold">{dateRangeRow.target}</div>
+                  <div className="mt-1 text-[11px] text-muted-foreground">
+                    pro-rated by configured working days
+                  </div>
+                </div>
+                <div className="rounded-xl border bg-card p-4">
+                  <div className="text-xs text-muted-foreground">Accuracy</div>
+                  <div className="mt-1 text-2xl font-semibold">
+                    {dateRangeRow.accuracy != null ? `${dateRangeRow.accuracy}%` : "—"}
+                  </div>
+                </div>
+                <div className="rounded-xl border bg-card p-4">
+                  <div className="text-xs text-muted-foreground">Working Days</div>
+                  <div className="mt-1 text-2xl font-semibold">
+                    {dateRangeRow.workingDays}
+                  </div>
+                  <div className="mt-1 text-[11px] text-muted-foreground">
+                    Mon–Fri in range
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-xl border bg-card p-4 space-y-3">
+                <div className="text-sm font-medium">
+                  Projects completed in range
+                </div>
+                {!dateRangeBreakdown || dateRangeBreakdown.length === 0 ? (
+                  <div className="text-xs text-muted-foreground">
+                    No projects completed in this range.
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {dateRangeBreakdown.map((p) => (
+                      <div
+                        key={p.projectId}
+                        className="flex items-center justify-between gap-3 rounded-lg border bg-background px-3 py-2 text-sm"
+                      >
+                        <div className="min-w-0">
+                          <div className="truncate font-medium">{p.title}</div>
+                          <div className="text-[11px] text-muted-foreground">
+                            {p.completedAt
+                              ? new Date(p.completedAt).toLocaleDateString()
+                              : "—"}
+                          </div>
+                        </div>
+                        <div className="shrink-0 font-semibold">
+                          {p.points} pt{p.points === 1 ? "" : "s"}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          ) : null}
         </div>
       ) : null}
     </div>
