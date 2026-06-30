@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
 import { requestPasswordReset } from "./actions";
+import { PendingForm, PendingSubmitButton } from "@/components/forms/pending-form";
 
 export default async function ForgotPasswordPage({
   searchParams,
@@ -20,22 +20,26 @@ export default async function ForgotPasswordPage({
         {ok ? <div className="rounded-md border p-3 text-sm">{ok}</div> : null}
       </div>
 
-      <form action={requestPasswordReset} className="space-y-4">
-        <div className="space-y-2">
-          <label className="text-sm font-medium">Email</label>
-          <Input name="email" type="email" placeholder="you@wredd.com" required />
-        </div>
+      <PendingForm action={requestPasswordReset} className="space-y-4">
+        {(pending) => (
+          <>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Email</label>
+              <Input name="email" type="email" placeholder="you@wredd.com" required disabled={pending} />
+            </div>
 
-        <Button type="submit" className="w-full">
-          Send reset link
-        </Button>
+            <PendingSubmitButton pending={pending} pendingLabel="Sending…" className="w-full">
+              Send reset link
+            </PendingSubmitButton>
 
-        <div className="text-center text-xs text-muted-foreground">
-          <Link className="underline" href="/login">
-            Back to login
-          </Link>
-        </div>
-      </form>
+            <div className="text-center text-xs text-muted-foreground">
+              <Link className="underline" href="/login">
+                Back to login
+              </Link>
+            </div>
+          </>
+        )}
+      </PendingForm>
     </div>
   );
 }

@@ -25,6 +25,7 @@ import { EstimatedPointsPanel } from "@/components/app/estimated-points-panel";
 import { sumManualForUser, sumManualByMonth, listManualForUser } from "@/lib/onsite-points/manual";
 import { ManualPointsDialog } from "./_components/manual-points-dialog";
 import { addManualPerformancePoint, deleteManualPerformancePoint } from "./actions";
+import { PendingForm, PendingPlainSubmitButton } from "@/components/forms/pending-form";
 import { CommitmentBadge, CommitmentIndexCard } from "@/components/app/commitment-index";
 
 const prisma = getPrisma();
@@ -1753,17 +1754,22 @@ const k = monthKeyOf(new Date(l.payableOn));
                             {m.points > 0 ? `+${m.points}` : m.points}
                           </span>
                           {canManageManual ? (
-                            <form action={deleteManualPerformancePoint}>
-                              <input type="hidden" name="id" value={m.id} />
-                              <input type="hidden" name="userId" value={onsiteEmployee.id} />
-                              <input type="hidden" name="period" value={period} />
-                              <button
-                                type="submit"
-                                className="text-[11px] text-muted-foreground underline hover:text-red-600"
-                              >
-                                delete
-                              </button>
-                            </form>
+                            <PendingForm action={deleteManualPerformancePoint}>
+                              {(pending) => (
+                                <>
+                                  <input type="hidden" name="id" value={m.id} />
+                                  <input type="hidden" name="userId" value={onsiteEmployee.id} />
+                                  <input type="hidden" name="period" value={period} />
+                                  <PendingPlainSubmitButton
+                                    pending={pending}
+                                    pendingLabel="deleting…"
+                                    className="text-[11px] text-muted-foreground underline hover:text-red-600"
+                                  >
+                                    delete
+                                  </PendingPlainSubmitButton>
+                                </>
+                              )}
+                            </PendingForm>
                           ) : null}
                         </div>
                       </div>

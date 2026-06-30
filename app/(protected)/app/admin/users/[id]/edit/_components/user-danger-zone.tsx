@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -25,9 +26,31 @@ export function UserDangerZone({
   isArchived: boolean;
   isSuperAdmin: boolean;
 }) {
-  const archiveRef = React.useRef<HTMLFormElement | null>(null);
-  const restoreRef = React.useRef<HTMLFormElement | null>(null);
-  const deleteRef = React.useRef<HTMLFormElement | null>(null);
+  const [pending, start] = useTransition();
+
+  function runArchive() {
+    start(async () => {
+      const fd = new FormData();
+      fd.set("userId", userId);
+      await archiveUser(fd);
+    });
+  }
+
+  function runRestore() {
+    start(async () => {
+      const fd = new FormData();
+      fd.set("userId", userId);
+      await restoreUser(fd);
+    });
+  }
+
+  function runDelete() {
+    start(async () => {
+      const fd = new FormData();
+      fd.set("userId", userId);
+      await deleteUser(fd);
+    });
+  }
 
   return (
     <div className="mt-10 rounded-xl border p-4">
@@ -43,23 +66,10 @@ export function UserDangerZone({
         </div>
       ) : (
         <div className="mt-4 flex flex-wrap items-center gap-2">
-          {/* Real forms live in normal DOM (not inside dialog portal) */}
-          <form ref={archiveRef} action={archiveUser}>
-            <input type="hidden" name="userId" value={userId} />
-          </form>
-
-          <form ref={restoreRef} action={restoreUser}>
-            <input type="hidden" name="userId" value={userId} />
-          </form>
-
-          <form ref={deleteRef} action={deleteUser}>
-            <input type="hidden" name="userId" value={userId} />
-          </form>
-
           {!isArchived ? (
             <AlertDialog>
               <AlertDialogTrigger asChild>
-                <Button variant="destructive">Archive user</Button>
+                <Button variant="destructive" disabled={pending}>Archive user</Button>
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
@@ -69,13 +79,9 @@ export function UserDangerZone({
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={() => {
-                      archiveRef.current?.requestSubmit();
-                    }}
-                  >
-                    Archive
+                  <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
+                  <AlertDialogAction disabled={pending} onClick={runArchive}>
+                    {pending ? "Archiving…" : "Archive"}
                   </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
@@ -84,11 +90,10 @@ export function UserDangerZone({
             <Button
               type="button"
               variant="secondary"
-              onClick={() => {
-                restoreRef.current?.requestSubmit();
-              }}
+              disabled={pending}
+              onClick={runRestore}
             >
-              Restore user
+              {pending ? "Restoring…" : "Restore user"}
             </Button>
           )}
 
@@ -96,6 +101,7 @@ export function UserDangerZone({
             <AlertDialogTrigger asChild>
               <Button
                 variant="outline"
+                disabled={pending}
                 className="border-destructive text-destructive hover:text-destructive"
               >
                 Delete permanently
@@ -110,13 +116,9 @@ export function UserDangerZone({
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction
-                  onClick={() => {
-                    deleteRef.current?.requestSubmit();
-                  }}
-                >
-                  Delete
+                <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
+                <AlertDialogAction disabled={pending} onClick={runDelete}>
+                  {pending ? "Deleting…" : "Delete"}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>

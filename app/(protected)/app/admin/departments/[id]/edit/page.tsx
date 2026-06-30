@@ -3,6 +3,7 @@ import { getPrisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/rbac";
 import { requireRole } from "@/lib/guards";
 import { deleteDepartment, updateDepartment } from "../../actions";
+import { PendingForm, PendingPlainSubmitButton } from "@/components/forms/pending-form";
 
 const prisma = getPrisma();
 
@@ -59,34 +60,50 @@ export default async function EditDepartmentPage({
       {ok ? <p className="text-sm text-green-600">Saved.</p> : null}
       {err ? <p className="text-sm text-red-600">{err}</p> : null}
 
-      <form action={onUpdate} className="space-y-3">
-        <div>
-          <label className="text-sm text-muted-foreground">Name</label>
-          <input
-            name="name"
-            defaultValue={department.name}
-            className="mt-1 w-full border rounded-md px-3 py-2 bg-background"
-            required
-            minLength={2}
-            maxLength={60}
-          />
-        </div>
+      <PendingForm action={onUpdate} className="space-y-3">
+        {(pending) => (
+          <>
+            <div>
+              <label className="text-sm text-muted-foreground">Name</label>
+              <input
+                name="name"
+                defaultValue={department.name}
+                className="mt-1 w-full border rounded-md px-3 py-2 bg-background"
+                required
+                minLength={2}
+                maxLength={60}
+                disabled={pending}
+              />
+            </div>
 
-        <button className="px-4 py-2 rounded-md bg-primary text-primary-foreground">
-          Save
-        </button>
-      </form>
+            <PendingPlainSubmitButton
+              pending={pending}
+              className="px-4 py-2 rounded-md bg-primary text-primary-foreground"
+            >
+              Save
+            </PendingPlainSubmitButton>
+          </>
+        )}
+      </PendingForm>
 
-      <form action={onDelete} className="space-y-2">
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" name="confirm" required />
-          Confirm delete
-        </label>
+      <PendingForm action={onDelete} className="space-y-2">
+        {(pending) => (
+          <>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" name="confirm" required disabled={pending} />
+              Confirm delete
+            </label>
 
-        <button className="px-4 py-2 rounded-md bg-destructive text-destructive-foreground">
-          Delete Department
-        </button>
-      </form>
+            <PendingPlainSubmitButton
+              pending={pending}
+              pendingLabel="Deleting…"
+              className="px-4 py-2 rounded-md bg-destructive text-destructive-foreground"
+            >
+              Delete Department
+            </PendingPlainSubmitButton>
+          </>
+        )}
+      </PendingForm>
     </div>
   );
 }

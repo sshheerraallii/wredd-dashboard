@@ -2,8 +2,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { readSession } from "@/lib/auth";
 import { getPrisma } from "@/lib/prisma";
-import { Button } from "@/components/ui/button";
 import { markAllRead, markOneRead } from "./actions";
+import { PendingForm, PendingSubmitButton } from "@/components/forms/pending-form";
 
 const prisma = getPrisma();
 
@@ -33,11 +33,13 @@ export default async function NotificationsPage() {
           </p>
         </div>
 
-        <form action={markAllRead}>
-          <Button type="submit" variant="secondary" disabled={unreadCount === 0}>
-            Mark all read
-          </Button>
-        </form>
+        <PendingForm action={markAllRead}>
+          {(pending) => (
+            <PendingSubmitButton pending={pending} pendingLabel="Marking…" variant="secondary" disabled={unreadCount === 0}>
+              Mark all read
+            </PendingSubmitButton>
+          )}
+        </PendingForm>
       </div>
 
       <div className="rounded-xl border bg-card divide-y">
@@ -73,12 +75,16 @@ export default async function NotificationsPage() {
               </div>
 
               {n.readAt ? null : (
-                <form action={markOneRead}>
-                  <input type="hidden" name="id" value={n.id} />
-                  <Button type="submit" size="sm" variant="secondary">
-                    Mark read
-                  </Button>
-                </form>
+                <PendingForm action={markOneRead}>
+                  {(pending) => (
+                    <>
+                      <input type="hidden" name="id" value={n.id} />
+                      <PendingSubmitButton pending={pending} pendingLabel="Marking…" size="sm" variant="secondary">
+                        Mark read
+                      </PendingSubmitButton>
+                    </>
+                  )}
+                </PendingForm>
               )}
             </div>
           ))

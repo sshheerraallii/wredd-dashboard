@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -19,9 +20,10 @@ export function ManualPointsDialog(props: {
 }) {
   const { userId, period, monthKey, action } = props;
   const [open, setOpen] = React.useState(false);
+  const [pending, start] = useTransition();
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(o) => { if (!pending) setOpen(o); }}>
       <DialogTrigger asChild>
         <Button type="button" variant="secondary" size="sm">
           Add Manual Points
@@ -34,9 +36,11 @@ export function ManualPointsDialog(props: {
         </DialogHeader>
 
         <form
-          action={(fd) => {
-            action(fd);
-            setOpen(false);
+          action={(fd: FormData) => {
+            start(async () => {
+              await action(fd);
+              setOpen(false);
+            });
           }}
           className="space-y-4"
         >
@@ -50,6 +54,7 @@ export function ManualPointsDialog(props: {
                 name="sign"
                 className="h-10 w-full rounded-md border bg-background px-3 text-sm"
                 defaultValue="POSITIVE"
+                disabled={pending}
               >
                 <option value="POSITIVE">Bonus (+)</option>
                 <option value="NEGATIVE">Deduction (−)</option>
@@ -65,6 +70,7 @@ export function ManualPointsDialog(props: {
                 step={1}
                 placeholder="e.g. 1"
                 className="h-10"
+                disabled={pending}
               />
               <div className="text-xs text-muted-foreground">
                 Whole number. Deduction is saved as negative.
@@ -79,6 +85,7 @@ export function ManualPointsDialog(props: {
               defaultValue={monthKey}
               placeholder="YYYY-MM"
               className="h-10"
+              disabled={pending}
             />
             <div className="text-xs text-muted-foreground">
               Counts toward this month&apos;s points and accuracy. Defaults to the
@@ -92,6 +99,7 @@ export function ManualPointsDialog(props: {
               name="note"
               placeholder="e.g. Great attitude helping a teammate"
               className="h-10"
+              disabled={pending}
             />
             <div className="text-xs text-muted-foreground">
               Shown in the audit list so the reason is always recorded.
@@ -99,8 +107,8 @@ export function ManualPointsDialog(props: {
           </div>
 
           <div className="flex justify-end gap-2">
-            <Button type="submit" size="sm">
-              Save entry
+            <Button type="submit" size="sm" disabled={pending}>
+              {pending ? "Saving…" : "Save entry"}
             </Button>
           </div>
         </form>

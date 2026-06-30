@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { resetPassword } from "./actions";
 import { getPrisma } from "@/lib/prisma";
 import crypto from "crypto";
+import { PendingForm, PendingSubmitButton } from "@/components/forms/pending-form";
 
 const prisma = getPrisma();
 
@@ -63,22 +64,26 @@ export default async function ResetPasswordPage({
         {err ? <div className="rounded-md border p-3 text-sm">{err}</div> : null}
       </div>
 
-      <form action={resetPassword} className="space-y-4">
-        <input type="hidden" name="token" value={token} />
+      <PendingForm action={resetPassword} className="space-y-4">
+        {(pending) => (
+          <>
+            <input type="hidden" name="token" value={token} />
 
-        <div className="space-y-2">
-          <label className="text-sm font-medium">New password</label>
-          <Input name="password" type="password" placeholder="Minimum 8 characters" required />
-        </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">New password</label>
+              <Input name="password" type="password" placeholder="Minimum 8 characters" required disabled={pending} />
+            </div>
 
-        <Button type="submit" className="w-full">
-          Update password
-        </Button>
+            <PendingSubmitButton pending={pending} pendingLabel="Updating…" className="w-full">
+              Update password
+            </PendingSubmitButton>
 
-        <div className="text-center text-xs text-muted-foreground">
-          <Link className="underline" href="/login">Back to login</Link>
-        </div>
-      </form>
+            <div className="text-center text-xs text-muted-foreground">
+              <Link className="underline" href="/login">Back to login</Link>
+            </div>
+          </>
+        )}
+      </PendingForm>
     </div>
   );
 }

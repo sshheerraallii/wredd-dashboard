@@ -2,6 +2,7 @@
 "use client";
 
 import * as React from "react";
+import { useTransition } from "react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -67,9 +68,10 @@ export default function NewProjectForm({ departments }: { departments: Departmen
   }, [priceUsd, platformFeePercent]);
 
   const canSubmit = departmentId.length > 0;
+  const [pending, start] = useTransition();
 
   return (
-    <form className="max-w-2xl space-y-6" action={createProject}>
+    <form className="max-w-2xl space-y-6" action={(fd: FormData) => start(async () => { await createProject(fd); })}>
       {/* Hidden inputs for Select/state-driven fields */}
       <input type="hidden" name="departmentId" value={departmentId} />
       <input type="hidden" name="portal" value={portal} />
@@ -248,12 +250,12 @@ export default function NewProjectForm({ departments }: { departments: Departmen
       </div>
 
       <div className="flex items-center justify-end gap-2 pt-2">
-        <Button type="button" variant="secondary" onClick={() => history.back()}>
+        <Button type="button" variant="secondary" disabled={pending} onClick={() => history.back()}>
           Cancel
         </Button>
 
-        <Button type="submit" disabled={!canSubmit}>
-          Save Project
+        <Button type="submit" disabled={!canSubmit || pending}>
+          {pending ? "Saving…" : "Save Project"}
         </Button>
       </div>
     </form>

@@ -1,7 +1,7 @@
 // app/(protected)/app/admin/targets/_components/allocation-editor.tsx
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { saveAllocations } from "../actions";
 
 type Dept = { id: string; name: string };
@@ -78,8 +78,13 @@ export default function AllocationEditor({
     });
   }
 
+  const [pending, start] = useTransition();
+
   return (
-    <form action={saveAllocations} className="space-y-4">
+    <form
+      action={(fd: FormData) => start(async () => { await saveAllocations(fd); })}
+      className="space-y-4"
+    >
       <input type="hidden" name="monthKey" value={monthKey} />
       <input type="hidden" name="payload" value={payload} />
 
@@ -130,6 +135,7 @@ export default function AllocationEditor({
                         value={values[`${bd.id}:${d.id}`] ?? 0}
                         onChange={(e) => setVal(bd.id, d.id, e.target.value)}
                         className="w-24 rounded-lg border bg-background px-2 py-1 text-sm"
+                        disabled={pending}
                       />
                     </td>
                   ))}
@@ -164,13 +170,13 @@ export default function AllocationEditor({
       <div className="flex items-center gap-3">
         <button
           type="submit"
-          disabled={!allValid}
+          disabled={!allValid || pending}
           className={[
             "rounded-xl px-4 py-2 text-sm font-medium text-white",
             allValid ? "bg-[#8F4043] hover:opacity-90" : "bg-muted-foreground/40 cursor-not-allowed",
           ].join(" ")}
         >
-          Save allocations
+          {pending ? "Saving…" : "Save allocations"}
         </button>
         {!allValid ? (
           <span className="text-xs text-muted-foreground">Each department column must total exactly 100%.</span>

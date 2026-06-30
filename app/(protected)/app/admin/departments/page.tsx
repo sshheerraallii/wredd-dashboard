@@ -3,6 +3,7 @@ import Link from "next/link";
 import { getPrisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/rbac";
 import { createDepartment } from "./actions";
+import { PendingForm, PendingPlainSubmitButton } from "@/components/forms/pending-form";
 
 const prisma = getPrisma();
 
@@ -30,22 +31,31 @@ export default async function DepartmentsPage({
       {ok ? <p className="text-sm text-green-600">Saved.</p> : null}
       {err ? <p className="text-sm text-red-600">{err}</p> : null}
 
-      <form action={createDepartment} className="flex gap-2 items-end">
-        <div className="flex-1">
-          <label className="text-sm text-muted-foreground">New Department</label>
-          <input
-            name="name"
-            placeholder="e.g., Operations"
-            className="mt-1 w-full border rounded-md px-3 py-2 bg-background"
-            required
-            minLength={2}
-            maxLength={60}
-          />
-        </div>
-        <button className="px-4 py-2 rounded-md bg-primary text-primary-foreground">
-          Add
-        </button>
-      </form>
+      <PendingForm action={createDepartment} className="flex gap-2 items-end">
+        {(pending) => (
+          <>
+            <div className="flex-1">
+              <label className="text-sm text-muted-foreground">New Department</label>
+              <input
+                name="name"
+                placeholder="e.g., Operations"
+                className="mt-1 w-full border rounded-md px-3 py-2 bg-background"
+                required
+                minLength={2}
+                maxLength={60}
+                disabled={pending}
+              />
+            </div>
+            <PendingPlainSubmitButton
+              pending={pending}
+              pendingLabel="Adding…"
+              className="px-4 py-2 rounded-md bg-primary text-primary-foreground"
+            >
+              Add
+            </PendingPlainSubmitButton>
+          </>
+        )}
+      </PendingForm>
 
       <div className="border rounded-lg overflow-hidden">
         <div className="grid grid-cols-12 px-4 py-2 text-sm bg-muted/40">

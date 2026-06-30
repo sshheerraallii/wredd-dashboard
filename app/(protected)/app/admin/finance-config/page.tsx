@@ -5,6 +5,7 @@ import { getPrisma } from "@/lib/prisma";
 import { createMonth, finalizeMonth, updateMonth, updateOnsiteConstants } from "./actions";
 import { UnfinalizeButton, RecalculateButton } from "./month-action-buttons";
 import { getOnsiteConstants } from "@/lib/onsite-points/settings";
+import { PendingForm, PendingPlainSubmitButton } from "@/components/forms/pending-form";
 
 const prisma = getPrisma();
 
@@ -85,23 +86,31 @@ export default async function FinanceConfigPage({
         <div className="rounded-2xl border bg-card p-4 space-y-4">
           <div className="text-sm font-medium">Months</div>
 
-          <form action={createMonth} className="space-y-2">
-            <label className="block text-xs text-muted-foreground">Create / open month (YYYY-MM)</label>
-            <div className="flex gap-2">
-              <input
-                name="monthKey"
-                defaultValue={selected}
-                placeholder="YYYY-MM"
-                className="w-full rounded-xl border bg-background px-3 py-2 text-sm"
-              />
-              <button className="rounded-xl border px-3 py-2 text-sm hover:bg-muted">
-                Open
-              </button>
-            </div>
-            <div className="text-[11px] text-muted-foreground">
-              Tip: Create the month first, then edit values, then finalize.
-            </div>
-          </form>
+          <PendingForm action={createMonth} className="space-y-2">
+            {(pending) => (
+              <>
+                <label className="block text-xs text-muted-foreground">Create / open month (YYYY-MM)</label>
+                <div className="flex gap-2">
+                  <input
+                    name="monthKey"
+                    defaultValue={selected}
+                    placeholder="YYYY-MM"
+                    className="w-full rounded-xl border bg-background px-3 py-2 text-sm"
+                    disabled={pending}
+                  />
+                  <PendingPlainSubmitButton
+                    pending={pending}
+                    className="rounded-xl border px-3 py-2 text-sm hover:bg-muted"
+                  >
+                    Open
+                  </PendingPlainSubmitButton>
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  Tip: Create the month first, then edit values, then finalize.
+                </div>
+              </>
+            )}
+          </PendingForm>
 
           <div className="h-px bg-border" />
 
@@ -153,12 +162,20 @@ export default async function FinanceConfigPage({
               <div className="flex items-center gap-2 flex-wrap justify-end">
                 {/* Finalize — only when not yet locked */}
                 {!isFinalized && (
-                  <form action={finalizeMonth}>
-                    <input type="hidden" name="monthKey" value={selected} />
-                    <button className="rounded-xl bg-primary text-primary-foreground px-4 py-2 text-sm hover:bg-primary/90 transition-colors">
-                      Finalize (Lock)
-                    </button>
-                  </form>
+                  <PendingForm action={finalizeMonth}>
+                    {(pending) => (
+                      <>
+                        <input type="hidden" name="monthKey" value={selected} />
+                        <PendingPlainSubmitButton
+                          pending={pending}
+                          pendingLabel="Finalizing…"
+                          className="rounded-xl bg-primary text-primary-foreground px-4 py-2 text-sm hover:bg-primary/90 transition-colors"
+                        >
+                          Finalize (Lock)
+                        </PendingPlainSubmitButton>
+                      </>
+                    )}
+                  </PendingForm>
                 )}
 
                 {/* Unfinalize — only when locked */}
@@ -187,70 +204,75 @@ export default async function FinanceConfigPage({
               This month doesn&apos;t exist yet. Use "Create / open month" to create it.
             </div>
           ) : (
-            <form action={updateMonth} className="space-y-4">
-              <input type="hidden" name="monthKey" value={selected} />
+            <PendingForm action={updateMonth} className="space-y-4">
+              {(pending) => (
+                <>
+                  <input type="hidden" name="monthKey" value={selected} />
 
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">FX Rate (USD → PKR)</label>
-                  <input
-                    name="fxRate"
-                    defaultValue={fmtFx(row.fxRate)}
-                    disabled={isFinalized}
-                    className="w-full rounded-xl border bg-background px-3 py-2 text-sm disabled:opacity-60"
-                    placeholder="e.g. 280.0000"
-                  />
-                </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-1">
+                      <label className="text-xs text-muted-foreground">FX Rate (USD → PKR)</label>
+                      <input
+                        name="fxRate"
+                        defaultValue={fmtFx(row.fxRate)}
+                        disabled={isFinalized || pending}
+                        className="w-full rounded-xl border bg-background px-3 py-2 text-sm disabled:opacity-60"
+                        placeholder="e.g. 280.0000"
+                      />
+                    </div>
 
-                <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">Avg Onsite Hour Cost (PKR)</label>
-                  <input
-                    name="avgOnsiteHourCostPkr"
-                    defaultValue={row.avgOnsiteHourCostPkr ?? ""}
-                    disabled={isFinalized}
-                    className="w-full rounded-xl border bg-background px-3 py-2 text-sm disabled:opacity-60"
-                    placeholder="e.g. 1500"
-                  />
-                </div>
+                    <div className="space-y-1">
+                      <label className="text-xs text-muted-foreground">Avg Onsite Hour Cost (PKR)</label>
+                      <input
+                        name="avgOnsiteHourCostPkr"
+                        defaultValue={row.avgOnsiteHourCostPkr ?? ""}
+                        disabled={isFinalized || pending}
+                        className="w-full rounded-xl border bg-background px-3 py-2 text-sm disabled:opacity-60"
+                        placeholder="e.g. 1500"
+                      />
+                    </div>
 
-                <div className="space-y-1 md:col-span-2">
-                  <label className="text-xs text-muted-foreground">Remote Overhead Fixed (PKR)</label>
-                  <input
-                    name="remoteOverheadFixedPkr"
-                    defaultValue={row.remoteOverheadFixedPkr ?? ""}
-                    disabled={isFinalized}
-                    className="w-full rounded-xl border bg-background px-3 py-2 text-sm disabled:opacity-60"
-                    placeholder="e.g. 250000"
-                  />
-                </div>
+                    <div className="space-y-1 md:col-span-2">
+                      <label className="text-xs text-muted-foreground">Remote Overhead Fixed (PKR)</label>
+                      <input
+                        name="remoteOverheadFixedPkr"
+                        defaultValue={row.remoteOverheadFixedPkr ?? ""}
+                        disabled={isFinalized || pending}
+                        className="w-full rounded-xl border bg-background px-3 py-2 text-sm disabled:opacity-60"
+                        placeholder="e.g. 250000"
+                      />
+                    </div>
 
-                <div className="space-y-1 md:col-span-2">
-                  <label className="text-xs text-muted-foreground">Notes</label>
-                  <textarea
-                    name="notes"
-                    defaultValue={safeStr(row.notes ?? "")}
-                    disabled={isFinalized}
-                    className="min-h-[90px] w-full rounded-xl border bg-background px-3 py-2 text-sm disabled:opacity-60"
-                    placeholder="Optional notes..."
-                  />
-                </div>
-              </div>
+                    <div className="space-y-1 md:col-span-2">
+                      <label className="text-xs text-muted-foreground">Notes</label>
+                      <textarea
+                        name="notes"
+                        defaultValue={safeStr(row.notes ?? "")}
+                        disabled={isFinalized || pending}
+                        className="min-h-[90px] w-full rounded-xl border bg-background px-3 py-2 text-sm disabled:opacity-60"
+                        placeholder="Optional notes..."
+                      />
+                    </div>
+                  </div>
 
-              <div className="flex items-center justify-between">
-                <div className="text-xs text-muted-foreground">
-                  {isFinalized
-                    ? "Unlock the month to edit values."
-                    : "Edits allowed until finalized."}
-                </div>
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs text-muted-foreground">
+                      {isFinalized
+                        ? "Unlock the month to edit values."
+                        : "Edits allowed until finalized."}
+                    </div>
 
-                <button
-                  disabled={isFinalized}
-                  className="rounded-xl border px-4 py-2 text-sm hover:bg-muted disabled:opacity-60"
-                >
-                  Save
-                </button>
-              </div>
-            </form>
+                    <PendingPlainSubmitButton
+                      pending={pending}
+                      disabled={isFinalized}
+                      className="rounded-xl border px-4 py-2 text-sm hover:bg-muted disabled:opacity-60"
+                    >
+                      Save
+                    </PendingPlainSubmitButton>
+                  </div>
+                </>
+              )}
+            </PendingForm>
           )}
         </div>
       </div>
@@ -267,61 +289,70 @@ export default async function FinanceConfigPage({
           </p>
         </div>
 
-        <form action={updateOnsiteConstants} className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-1">
-              <label className="text-xs font-medium">Production Multiple</label>
-              <input
-                name="productionMultiple"
-                type="number"
-                step="0.01"
-                min="0.01"
-                defaultValue={onsiteConstants.productionMultiple}
-                className="w-full rounded-xl border bg-background px-3 py-2 text-sm"
-                placeholder="e.g. 3"
-              />
-              <p className="text-[11px] leading-relaxed text-muted-foreground">
-                How many times a worker&apos;s raw hourly cost a project must
-                bill to be worth doing. <strong>3 = a project must earn 3× what
-                the worker costs you.</strong> This turns a cost-hour into a
-                billable price. Lower it → projects count for fewer points; raise
-                it → more points. Based on 8 years of animation data. Used by: the
-                calculators, estimated points on active projects, and monthly
-                target-point math. Changes apply going forward only.
-              </p>
-            </div>
+        <PendingForm action={updateOnsiteConstants} className="space-y-4">
+          {(pending) => (
+            <>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium">Production Multiple</label>
+                  <input
+                    name="productionMultiple"
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    defaultValue={onsiteConstants.productionMultiple}
+                    className="w-full rounded-xl border bg-background px-3 py-2 text-sm"
+                    placeholder="e.g. 3"
+                    disabled={pending}
+                  />
+                  <p className="text-[11px] leading-relaxed text-muted-foreground">
+                    How many times a worker&apos;s raw hourly cost a project must
+                    bill to be worth doing. <strong>3 = a project must earn 3× what
+                    the worker costs you.</strong> This turns a cost-hour into a
+                    billable price. Lower it → projects count for fewer points; raise
+                    it → more points. Based on 8 years of animation data. Used by: the
+                    calculators, estimated points on active projects, and monthly
+                    target-point math. Changes apply going forward only.
+                  </p>
+                </div>
 
-            <div className="space-y-1">
-              <label className="text-xs font-medium">Dollars Per Point (USD)</label>
-              <input
-                name="dollarsPerPoint"
-                type="number"
-                step="1"
-                min="1"
-                defaultValue={onsiteConstants.dollarsPerPoint}
-                className="w-full rounded-xl border bg-background px-3 py-2 text-sm"
-                placeholder="e.g. 6"
-              />
-              <p className="text-[11px] leading-relaxed text-muted-foreground">
-                The revenue value of one point: <strong>1 point = $6 of billable
-                project value.</strong> Converts a project&apos;s billable price
-                into points. Lower it → the same project is worth more points;
-                raise it → fewer. Used by: the calculators, estimated points, and
-                monthly target points. Changes apply going forward only and
-                rescale all future point numbers — change with care.
-              </p>
-            </div>
-          </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium">Dollars Per Point (USD)</label>
+                  <input
+                    name="dollarsPerPoint"
+                    type="number"
+                    step="1"
+                    min="1"
+                    defaultValue={onsiteConstants.dollarsPerPoint}
+                    className="w-full rounded-xl border bg-background px-3 py-2 text-sm"
+                    placeholder="e.g. 6"
+                    disabled={pending}
+                  />
+                  <p className="text-[11px] leading-relaxed text-muted-foreground">
+                    The revenue value of one point: <strong>1 point = $6 of billable
+                    project value.</strong> Converts a project&apos;s billable price
+                    into points. Lower it → the same project is worth more points;
+                    raise it → fewer. Used by: the calculators, estimated points, and
+                    monthly target points. Changes apply going forward only and
+                    rescale all future point numbers — change with care.
+                  </p>
+                </div>
+              </div>
 
-          <div className="flex items-center justify-between">
-            <div className="text-xs text-muted-foreground">
-              Saving updates both values together, everywhere they&apos;re used.
-            </div>
-            <button className="rounded-xl border px-4 py-2 text-sm hover:bg-muted">
-              Save constants
-            </button>
-          </div>
-        </form>
+              <div className="flex items-center justify-between">
+                <div className="text-xs text-muted-foreground">
+                  Saving updates both values together, everywhere they&apos;re used.
+                </div>
+                <PendingPlainSubmitButton
+                  pending={pending}
+                  className="rounded-xl border px-4 py-2 text-sm hover:bg-muted"
+                >
+                  Save constants
+                </PendingPlainSubmitButton>
+              </div>
+            </>
+          )}
+        </PendingForm>
       </div>
     </div>
   );

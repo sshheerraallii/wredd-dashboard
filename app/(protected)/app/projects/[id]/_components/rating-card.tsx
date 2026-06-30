@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { createProjectRating } from "../actions/rating";
 
@@ -87,6 +88,7 @@ export function RatingCard({ projectId }: { projectId: string }) {
   const [professionalism, setProfessionalism] = React.useState<number | null>(null);
 
   const canSubmit = communication != null && quality != null && speed != null;
+  const [pending, start] = useTransition();
 
   return (
     <div className="rounded-xl border bg-card p-4">
@@ -104,7 +106,7 @@ export function RatingCard({ projectId }: { projectId: string }) {
       </div>
 
       {open ? (
-        <form className="mt-4 space-y-5" action={createProjectRating}>
+        <form className="mt-4 space-y-5" action={(fd: FormData) => start(async () => { await createProjectRating(fd); })}>
           <input type="hidden" name="projectId" value={projectId} />
 
           {/* Hidden inputs that server action expects */}
@@ -135,10 +137,10 @@ export function RatingCard({ projectId }: { projectId: string }) {
           </div>
 
           <div className="flex gap-2">
-            <Button type="submit" disabled={!canSubmit}>
-              Submit rating
+            <Button type="submit" disabled={!canSubmit || pending}>
+              {pending ? "Submitting…" : "Submit rating"}
             </Button>
-            <Button type="button" variant="secondary" onClick={() => setOpen(false)}>
+            <Button type="button" variant="secondary" disabled={pending} onClick={() => setOpen(false)}>
               Cancel
             </Button>
           </div>

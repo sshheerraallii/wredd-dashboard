@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,7 @@ export function DeadlineExtend({
 }) {
   const router = useRouter();
   const [hours, setHours] = React.useState<string>("");
+  const [pending, start] = useTransition();
 
   if (!canExtend) return null;
 
@@ -28,22 +30,26 @@ export function DeadlineExtend({
           placeholder="Add hours (e.g. 12)"
           value={hours}
           onChange={(e) => setHours(e.target.value)}
+          disabled={pending}
         />
         <Button
           type="button"
-          onClick={async () => {
+          disabled={pending}
+          onClick={() => {
             const n = Number(hours);
             if (!Number.isFinite(n) || n <= 0) return;
 
-            await extendDeadline({ projectId, addHours: n });
+            start(async () => {
+              await extendDeadline({ projectId, addHours: n });
 
-            // force this page to fetch fresh server data immediately
-            router.refresh();
+              // force this page to fetch fresh server data immediately
+              router.refresh();
 
-            setHours("");
+              setHours("");
+            });
           }}
         >
-          Extend
+          {pending ? "Extending…" : "Extend"}
         </Button>
       </div>
 

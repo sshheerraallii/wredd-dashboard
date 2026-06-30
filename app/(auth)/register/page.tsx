@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { completeRegistration } from "./actions";
 import { getPrisma } from "@/lib/prisma";
 import crypto from "crypto";
+import { PendingForm, PendingSubmitButton } from "@/components/forms/pending-form";
 
 const prisma = getPrisma();
 
@@ -75,33 +76,37 @@ export default async function RegisterPage({
         {err ? <div className="rounded-md border p-3 text-sm">{err}</div> : null}
       </div>
 
-      <form action={completeRegistration} className="space-y-4">
-        <input type="hidden" name="token" value={token} />
+      <PendingForm action={completeRegistration} className="space-y-4">
+        {(pending) => (
+          <>
+            <input type="hidden" name="token" value={token} />
 
-        <div className="space-y-2">
-          <label className="text-sm font-medium">Full name</label>
-          <Input name="fullName" placeholder="e.g., Sher Ali" required />
-        </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Full name</label>
+              <Input name="fullName" placeholder="e.g., Sher Ali" required disabled={pending} />
+            </div>
 
-        <div className="space-y-2">
-          <label className="text-sm font-medium">Username</label>
-          <Input name="username" placeholder="e.g., sher" required />
-          <div className="text-xs text-muted-foreground">No spaces. Must be unique.</div>
-        </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Username</label>
+              <Input name="username" placeholder="e.g., sher" required disabled={pending} />
+              <div className="text-xs text-muted-foreground">No spaces. Must be unique.</div>
+            </div>
 
-        <div className="space-y-2">
-          <label className="text-sm font-medium">Password</label>
-          <Input name="password" type="password" placeholder="Minimum 8 characters" required />
-        </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Password</label>
+              <Input name="password" type="password" placeholder="Minimum 8 characters" required disabled={pending} />
+            </div>
 
-        <Button type="submit" className="w-full">
-          Create account
-        </Button>
+            <PendingSubmitButton pending={pending} pendingLabel="Creating…" className="w-full">
+              Create account
+            </PendingSubmitButton>
 
-        <div className="text-center text-xs text-muted-foreground">
-          Already have an account? <Link className="underline" href="/login">Login</Link>
-        </div>
-      </form>
+            <div className="text-center text-xs text-muted-foreground">
+              Already have an account? <Link className="underline" href="/login">Login</Link>
+            </div>
+          </>
+        )}
+      </PendingForm>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -21,9 +22,10 @@ export function ManualAdjustmentDialog(props: {
   const { workerId, projects, action } = props;
 
   const [open, setOpen] = React.useState(false);
+  const [pending, start] = useTransition();
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(o) => { if (!pending) setOpen(o); }}>
       <DialogTrigger asChild>
         <Button type="button" variant="secondary">
           Add Bonus / Fine
@@ -36,9 +38,11 @@ export function ManualAdjustmentDialog(props: {
         </DialogHeader>
 
         <form
-          action={(fd) => {
-            action(fd);
-            setOpen(false);
+          action={(fd: FormData) => {
+            start(async () => {
+              await action(fd);
+              setOpen(false);
+            });
           }}
           className="space-y-4"
         >
@@ -51,6 +55,7 @@ export function ManualAdjustmentDialog(props: {
                 name="kind"
                 className="h-10 w-full rounded-md border bg-background px-3 text-sm"
                 defaultValue="BONUS"
+                disabled={pending}
               >
                 <option value="BONUS">Bonus (+)</option>
                 <option value="FINE">Fine (-)</option>
@@ -59,7 +64,7 @@ export function ManualAdjustmentDialog(props: {
 
             <div className="space-y-1">
               <label className="text-sm font-medium">Amount</label>
-              <Input name="amount" placeholder="e.g. 2500" className="h-10" />
+              <Input name="amount" placeholder="e.g. 2500" className="h-10" disabled={pending} />
               <div className="text-xs text-muted-foreground">
                 Enter a positive number. Fine is saved as negative.
               </div>
@@ -73,6 +78,7 @@ export function ManualAdjustmentDialog(props: {
               name="projectId"
               placeholder="Optional: choose project"
               className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+              disabled={pending}
             />
             <datalist id="project_opts">
               {projects.map((p) => (
@@ -88,14 +94,14 @@ export function ManualAdjustmentDialog(props: {
 
           <div className="space-y-1">
             <label className="text-sm font-medium">Reason / note</label>
-            <Input name="reason" placeholder="Reason shown in Project column" className="h-10" />
+            <Input name="reason" placeholder="Reason shown in Project column" className="h-10" disabled={pending} />
           </div>
 
           <div className="flex items-center justify-end gap-2 pt-2">
-            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+            <Button type="button" variant="outline" disabled={pending} onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit">Create entry</Button>
+            <Button type="submit" disabled={pending}>{pending ? "Creating…" : "Create entry"}</Button>
           </div>
         </form>
       </DialogContent>

@@ -18,6 +18,7 @@ import { WorkerPickerDialog } from "../_components/worker-picker-dialog";
 import { ManualAdjustmentDialog } from "../_components/manual-adjustment-dialog";
 
 import { bucketPaymentLine, type Bucket } from "@/lib/payments-bucket";
+import { PendingForm, PendingSubmitButton } from "@/components/forms/pending-form";
 
 const prisma = getPrisma();
 
@@ -291,25 +292,39 @@ export default async function WorkerPaymentsAdminPage({
                     <td className="py-3 px-4 text-right">
                       {canMark ? (
                         <div className="flex flex-col items-end gap-2">
-                          <form action={markPaymentLinePaid} className="flex items-center gap-2">
-                            <input type="hidden" name="lineId" value={line.id} />
-                            <Input name="note" placeholder="Note (optional)" className="h-9 w-48" />
-                            <Button type="submit" className="h-9">
-                              Mark PAID
-                            </Button>
-                          </form>
+                          <PendingForm action={markPaymentLinePaid} className="flex items-center gap-2">
+                            {(pending) => (
+                              <>
+                                <input type="hidden" name="lineId" value={line.id} />
+                                <Input name="note" placeholder="Note (optional)" className="h-9 w-48" disabled={pending} />
+                                <PendingSubmitButton pending={pending} pendingLabel="Marking…" className="h-9">
+                                  Mark PAID
+                                </PendingSubmitButton>
+                              </>
+                            )}
+                          </PendingForm>
 
-                          <form action={markPaymentLineExceptionPaid} className="flex items-center gap-2">
-                            <input type="hidden" name="lineId" value={line.id} />
-                            <Input
-                              name="note"
-                              placeholder="Exception note (optional)"
-                              className="h-9 w-48"
-                            />
-                            <Button type="submit" variant="secondary" className="h-9">
-                              Exception Paid
-                            </Button>
-                          </form>
+                          <PendingForm action={markPaymentLineExceptionPaid} className="flex items-center gap-2">
+                            {(pending) => (
+                              <>
+                                <input type="hidden" name="lineId" value={line.id} />
+                                <Input
+                                  name="note"
+                                  placeholder="Exception note (optional)"
+                                  className="h-9 w-48"
+                                  disabled={pending}
+                                />
+                                <PendingSubmitButton
+                                  pending={pending}
+                                  pendingLabel="Marking…"
+                                  variant="secondary"
+                                  className="h-9"
+                                >
+                                  Exception Paid
+                                </PendingSubmitButton>
+                              </>
+                            )}
+                          </PendingForm>
                         </div>
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>
@@ -379,13 +394,21 @@ export default async function WorkerPaymentsAdminPage({
 
             <ManualAdjustmentDialog workerId={workerId} projects={projectOptions} action={createManualPaymentEntry} />
 
-            <form action={markAllWorkerUnpaidPaid} className="flex items-center gap-2">
-              <input type="hidden" name="workerId" value={workerId} />
-              <Input name="note" placeholder="Bulk note (optional)" className="h-10 w-56" />
-              <Button type="submit" disabled={tab === "history" || unpaidAll.length === 0}>
-                Mark all unpaid as PAID
-              </Button>
-            </form>
+            <PendingForm action={markAllWorkerUnpaidPaid} className="flex items-center gap-2">
+              {(pending) => (
+                <>
+                  <input type="hidden" name="workerId" value={workerId} />
+                  <Input name="note" placeholder="Bulk note (optional)" className="h-10 w-56" disabled={pending} />
+                  <PendingSubmitButton
+                    pending={pending}
+                    pendingLabel="Marking…"
+                    disabled={tab === "history" || unpaidAll.length === 0}
+                  >
+                    Mark all unpaid as PAID
+                  </PendingSubmitButton>
+                </>
+              )}
+            </PendingForm>
           </div>
         </div>
 

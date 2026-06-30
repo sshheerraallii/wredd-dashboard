@@ -9,6 +9,7 @@ import { openMonth, saveWorkingDays, snapshotMonth } from "./actions";
 import AllocationEditor from "./_components/allocation-editor";
 import { computeTargets } from "@/lib/bd-targets/compute";
 import { Headline, DeptCard, BdTable, SnapshotHistory } from "@/components/bd-targets/ui";
+import { PendingForm, PendingPlainSubmitButton } from "@/components/forms/pending-form";
 
 const prisma = getPrisma();
 
@@ -180,15 +181,25 @@ export default async function BdTargetsPage({
         <div className="space-y-4">
           <div className="rounded-2xl border bg-card p-4 space-y-3">
             <div className="text-sm font-medium">Month</div>
-            <form action={openMonth} className="flex gap-2">
-              <input
-                name="monthKey"
-                defaultValue={selected}
-                placeholder="YYYY-MM"
-                className="w-full rounded-xl border bg-background px-3 py-2 text-sm"
-              />
-              <button className="rounded-xl border px-3 py-2 text-sm hover:bg-muted">Open</button>
-            </form>
+            <PendingForm action={openMonth} className="flex gap-2">
+              {(pending) => (
+                <>
+                  <input
+                    name="monthKey"
+                    defaultValue={selected}
+                    placeholder="YYYY-MM"
+                    className="w-full rounded-xl border bg-background px-3 py-2 text-sm"
+                    disabled={pending}
+                  />
+                  <PendingPlainSubmitButton
+                    pending={pending}
+                    className="rounded-xl border px-3 py-2 text-sm hover:bg-muted"
+                  >
+                    Open
+                  </PendingPlainSubmitButton>
+                </>
+              )}
+            </PendingForm>
             <div className="space-y-1 max-h-[280px] overflow-auto pr-1">
               {months.map((m) => (
                 <a
@@ -210,17 +221,27 @@ export default async function BdTargetsPage({
             <p className="text-xs text-muted-foreground">
               Used for the daily rate and runway. Stored on the month&apos;s finance config.
             </p>
-            <form action={saveWorkingDays} className="space-y-2">
-              <input type="hidden" name="monthKey" value={selected} />
-              <input
-                name="workingDays"
-                inputMode="numeric"
-                defaultValue={workingDays ?? ""}
-                placeholder="e.g. 25"
-                className="w-full rounded-xl border bg-background px-3 py-2 text-sm"
-              />
-              <button className="w-full rounded-xl border px-3 py-2 text-sm hover:bg-muted">Save working days</button>
-            </form>
+            <PendingForm action={saveWorkingDays} className="space-y-2">
+              {(pending) => (
+                <>
+                  <input type="hidden" name="monthKey" value={selected} />
+                  <input
+                    name="workingDays"
+                    inputMode="numeric"
+                    defaultValue={workingDays ?? ""}
+                    placeholder="e.g. 25"
+                    className="w-full rounded-xl border bg-background px-3 py-2 text-sm"
+                    disabled={pending}
+                  />
+                  <PendingPlainSubmitButton
+                    pending={pending}
+                    className="w-full rounded-xl border px-3 py-2 text-sm hover:bg-muted"
+                  >
+                    Save working days
+                  </PendingPlainSubmitButton>
+                </>
+              )}
+            </PendingForm>
             {workingDays == null ? (
               <div className="text-[11px] text-amber-700">Not set for {selected} — runway can&apos;t be computed yet.</div>
             ) : null}
@@ -231,12 +252,19 @@ export default async function BdTargetsPage({
             <p className="text-xs text-muted-foreground">
               Freeze this month&apos;s target &amp; achieved (closed book). Re-snapshot to refresh.
             </p>
-            <form action={snapshotMonth}>
-              <input type="hidden" name="monthKey" value={selected} />
-              <button className="w-full rounded-xl border px-3 py-2 text-sm hover:bg-muted">
-                {selectedSnapshotAt ? "Re-snapshot this month" : "Snapshot this month"}
-              </button>
-            </form>
+            <PendingForm action={snapshotMonth}>
+              {(pending) => (
+                <>
+                  <input type="hidden" name="monthKey" value={selected} />
+                  <PendingPlainSubmitButton
+                    pending={pending}
+                    className="w-full rounded-xl border px-3 py-2 text-sm hover:bg-muted"
+                  >
+                    {selectedSnapshotAt ? "Re-snapshot this month" : "Snapshot this month"}
+                  </PendingPlainSubmitButton>
+                </>
+              )}
+            </PendingForm>
             {selectedSnapshotAt ? (
               <div className="text-[11px] text-muted-foreground">
                 Last snapshot: {new Date(selectedSnapshotAt).toISOString().slice(0, 16).replace("T", " ")} UTC
