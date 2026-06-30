@@ -6,6 +6,7 @@ import { readSession } from "@/lib/auth";
 import { getPrisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
 import { MonthRangeFilter } from "./_components/month-range-filter";
+import { MonthPicker } from "./_components/month-picker";
 import { MonthGroups, type MonthGroup } from "./_components/month-groups";
 import { getWorkerAssignmentStats } from "@/lib/worker-stats/assignments";
 import { computeCommitmentIndex } from "@/lib/worker-stats/commitment-index";
@@ -327,7 +328,7 @@ function effectiveMonthKeyForProject(p: {
 export default async function WorkerPerformancePage({
   searchParams,
 }: {
-  searchParams: { period?: string; from?: string; to?: string; mPage?: string };
+  searchParams: { period?: string; from?: string; to?: string; mPage?: string; month?: string };
 }) {
   const session = await readSession();
   if (!session?.user) redirect("/login");
@@ -342,8 +343,24 @@ export default async function WorkerPerformancePage({
   const period = parsePeriod(searchParams?.period);
 
   const now = new Date();
-  const mk = monthKeyOf(now);
-  const { start: monthStart, end: monthEnd } = monthRange(now);
+  const currentMonthKey = monthKeyOf(now);
+  // Monthly tab is selectable via ?month=YYYY-MM (defaults to current month).
+  const requestedMonth = (searchParams?.month || "").trim();
+  const validMonth = /^\d{4}-\d{2}$/.test(requestedMonth) ? requestedMonth : "";
+  const mk = validMonth && validMonth <= currentMonthKey ? validMonth : currentMonthKey;
+  const isCurrentMonth = mk === currentMonthKey;
+  const { start: monthStart, end: monthEnd } = monthRangeFromKey(mk);
+
+  // Months selectable in the picker (newest first, up to 18 months back).
+  const pickerMonths: string[] = (() => {
+    const out: string[] = [];
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    for (let i = 0; i < 18; i++) {
+      out.push(monthKeyOf(d));
+      d.setUTCMonth(d.getUTCMonth() - 1);
+    }
+    return out;
+  })();
 
   const fromKey = (searchParams?.from || "").trim();
   const toKey = (searchParams?.to || "").trim();
@@ -677,7 +694,12 @@ const completed =
               Onsite • {me.fullName} • {me.workerType || "—"}
             </p>
           </div>
-          <PeriodSwitch period={period} />
+          <div className="flex items-center gap-2">
+            {period === "monthly" ? (
+              <MonthPicker monthKeys={pickerMonths} current={mk} />
+            ) : null}
+            <PeriodSwitch period={period} />
+          </div>
         </div>
 
         {/* Commitment Index */}
@@ -733,8 +755,8 @@ const completed =
           </div>
         </div>
 
-        {/* Live estimated layer — only meaningful for active projects right now */}
-        <EstimatedPointsPanel summary={estimatedSummary} />
+        {/* Live estimated layer — current month only (estimates are "now") */}
+        {isCurrentMonth ? <EstimatedPointsPanel summary={estimatedSummary} /> : null}
 
         {period === "monthly" ? (
           <div className="rounded-xl border bg-card p-4 space-y-3">
