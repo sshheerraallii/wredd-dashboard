@@ -8,6 +8,7 @@ import { EmployeePickerDialog } from "./_components/employee-picker-dialog";
 import { PaginationNav } from "./_components/pagination";
 import { EmployeeProjectsTable } from "./_components/employee-projects-table";
 import { MonthRangeFilter } from "./_components/month-range-filter";
+import { MonthPicker } from "./_components/month-picker";
 import { MonthGroups, type MonthGroup } from "./_components/month-groups";
 import { getMultipleWorkerStats, getWorkerAssignmentStats } from "@/lib/worker-stats/assignments";
 import { computeCommitmentIndex, computeMultipleCommitmentIndexes } from "@/lib/worker-stats/commitment-index";
@@ -756,6 +757,7 @@ export default async function PerformancePage({
     mPage?: string;
     from?: string;
     to?: string;
+    month?: string;
   };
 }) {
   const session = await readSession();
@@ -775,8 +777,25 @@ export default async function PerformancePage({
   const summarySkip = (page - 1) * PAGE_SIZE;
 
   const now = new Date();
-  const mk = monthKeyOf(now);
-  const { start: monthStart, end: monthEnd } = monthRange(now);
+  const currentMk = monthKeyOf(now);
+  // Monthly tab is selectable via ?month=YYYY-MM (defaults to current month).
+  // Never allow a future month.
+  const requestedMonth = clampMonthKey(searchParams?.month);
+  const mk =
+    requestedMonth && requestedMonth <= currentMk ? requestedMonth : currentMk;
+  const isCurrentMonth = mk === currentMk;
+  const { start: monthStart, end: monthEnd } = monthRangeFromKey(mk);
+
+  // Months selectable in the picker (newest first, up to 18 months back).
+  const pickerMonths: string[] = (() => {
+    const out: string[] = [];
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    for (let i = 0; i < 18; i++) {
+      out.push(monthKeyOf(d));
+      d.setUTCMonth(d.getUTCMonth() - 1);
+    }
+    return out;
+  })();
 
   const onsiteUsers = await getOnsiteUsers();
   const remoteUsers = await getRemoteUsers();
@@ -1454,7 +1473,17 @@ const k = monthKeyOf(new Date(l.payableOn));
             Tabs-based summaries + employee drilldown (Monthly / Overall).
           </p>
         </div>
-        <PeriodSwitch tab={tab} period={period} />
+        <div className="flex items-center gap-2">
+          {period === "monthly" ? (
+            <MonthPicker
+              monthKeys={pickerMonths}
+              current={mk}
+              tab={tab}
+              userId={selectedUserId || undefined}
+            />
+          ) : null}
+          <PeriodSwitch tab={tab} period={period} />
+        </div>
       </div>
 
       <Pills tab={tab} period={period} />
@@ -1509,7 +1538,11 @@ const k = monthKeyOf(new Date(l.payableOn));
                     </td>
                     <td className="py-2 text-right">{r.achievedPoints}</td>
                     <td className="py-2 text-right text-muted-foreground">
-                      {r.estimatedPoints > 0 ? `~${r.estimatedPoints}` : "—"}
+                      {isCurrentMonth
+                        ? r.estimatedPoints > 0
+                          ? `~${r.estimatedPoints}`
+                          : "—"
+                        : "—"}
                     </td>
                     <td className="py-2 text-right">
                       {r.accuracy != null ? `${r.accuracy}%` : "—"}
@@ -1622,8 +1655,8 @@ const k = monthKeyOf(new Date(l.payableOn));
                 </div>
               </div>
 
-              {/* Live estimated layer for this worker (current active projects) */}
-              {onsiteEmployee.estimatedSummary && (
+              {/* Live estimated layer — current month only (estimates are "now") */}
+              {isCurrentMonth && onsiteEmployee.estimatedSummary && (
                 <EstimatedPointsPanel summary={onsiteEmployee.estimatedSummary} />
               )}
 
