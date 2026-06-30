@@ -963,6 +963,9 @@ export default async function PerformancePage({
     const pts = await onsitePointsForUser(selectedOnsite.id, period, mk);
 
     let accuracy: number | null = null;
+    let estimatedAccuracy: number | null = null;
+    const isViewingCurrentMonth = mk === monthKeyOf(now);
+    const drillEstimated = await getUserEstimatedPoints(selectedOnsite.id);
     if (period === "monthly") {
       const t = proratedMonthlyTarget({
         targetMonthlyPoints: selectedOnsite.targetMonthlyPoints,
@@ -970,6 +973,13 @@ export default async function PerformancePage({
         monthKey: mk,
       });
       accuracy = t > 0 ? Math.round((pts.achievedPoints / t) * 100) : null;
+      // Projected accuracy = finalized + live estimated points, same target.
+      // Only meaningful for the current month (no live estimate for past months).
+      if (t > 0 && isViewingCurrentMonth) {
+        estimatedAccuracy = Math.round(
+          ((pts.achievedPoints + drillEstimated.totalEstimatedPoints) / t) * 100
+        );
+      }
     } else {
       const a = await onsiteMonthlyAccuracyAvg({
         userId: selectedOnsite.id,
@@ -991,7 +1001,8 @@ export default async function PerformancePage({
       manualPoints: pts.manualPoints,
       creditedProjects: pts.creditedProjects,
       accuracy,
-      estimatedSummary: await getUserEstimatedPoints(selectedOnsite.id),
+      estimatedAccuracy,
+      estimatedSummary: drillEstimated,
       manualEntries: await listManualForUser(
         selectedOnsite.id,
         period === "monthly" ? { monthKey: mk } : {}
@@ -1588,6 +1599,15 @@ const k = monthKeyOf(new Date(l.payableOn));
                   <div className="text-lg font-semibold">
                     {onsiteEmployee.accuracy != null ? `${onsiteEmployee.accuracy}%` : "—"}
                   </div>
+                  {onsiteEmployee.estimatedAccuracy != null ? (
+                    <div className="mt-0.5 text-xs font-medium text-sky-700 dark:text-sky-400">
+                      {onsiteEmployee.estimatedAccuracy}% projected
+                      <span className="font-normal text-muted-foreground">
+                        {" "}
+                        (incl. in-flight)
+                      </span>
+                    </div>
+                  ) : null}
                   <div className="text-xs text-muted-foreground">
                     {period === "monthly"
                       ? `Achieved ${onsiteEmployee.achievedPoints}${

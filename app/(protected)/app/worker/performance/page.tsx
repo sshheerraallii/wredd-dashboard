@@ -652,6 +652,22 @@ const completed =
 
     const estimatedSummary = await getUserEstimatedPoints(userId);
 
+    // Projected accuracy = finalized + live estimated points, same prorated
+    // target. Current month only (no live estimate for a past month).
+    let estimatedAccuracy: number | null = null;
+    if (period === "monthly" && mk === monthKeyOf(now)) {
+      const t = proratedMonthlyTarget({
+        targetMonthlyPoints: me.targetMonthlyPoints,
+        joinedAt: me.joinedAt,
+        monthKey: mk,
+      });
+      if (t > 0) {
+        estimatedAccuracy = Math.round(
+          ((pts.achievedPoints + estimatedSummary.totalEstimatedPoints) / t) * 100
+        );
+      }
+    }
+
     return (
       <div className="p-6 space-y-5">
         <div className="flex items-start justify-between gap-4">
@@ -699,6 +715,14 @@ const completed =
                 ? "prorated monthly"
                 : "avg of monthly accuracies (prorated)"}
             </div>
+            {estimatedAccuracy != null ? (
+              <div className="mt-0.5 text-xs font-medium text-sky-700 dark:text-sky-400">
+                {estimatedAccuracy}% projected{" "}
+                <span className="font-normal text-muted-foreground">
+                  (incl. in-flight work)
+                </span>
+              </div>
+            ) : null}
             {pts.manualPoints ? (
               <div className="mt-1 text-[11px] text-muted-foreground">
                 Includes {pts.manualPoints > 0 ? "+" : "−"}
