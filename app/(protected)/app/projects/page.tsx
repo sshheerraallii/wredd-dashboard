@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import { AnnouncementBanner } from "@/components/app/announcement-banner";
 import { AnnouncementBannerDismissable } from "@/components/app/announcement-banner-dismissable";
 import { markProjectSeenAction } from "@/lib/actions/mark-seen";
-import { PendingForm, PendingPlainSubmitButton } from "@/components/forms/pending-form";
 
 const prisma = getPrisma();
 
@@ -480,20 +479,15 @@ export default async function ProjectsPage({
                       </div>
                     )}
                     {isUnread && (
-                      <PendingForm action={markProjectSeenAction} className="mt-1">
-                        {(pending) => (
-                          <>
-                            <input type="hidden" name="projectId" value={p.id} />
-                            <PendingPlainSubmitButton
-                              pending={pending}
-                              pendingLabel="Marking…"
-                              className="text-[11px] text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors"
-                            >
-                              Mark as read
-                            </PendingPlainSubmitButton>
-                          </>
-                        )}
-                      </PendingForm>
+                      <form action={markProjectSeenAction} className="mt-1">
+                        <input type="hidden" name="projectId" value={p.id} />
+                        <button
+                          type="submit"
+                          className="text-[11px] text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors"
+                        >
+                          Mark as read
+                        </button>
+                      </form>
                     )}
                   </div>
 

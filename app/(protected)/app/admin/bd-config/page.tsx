@@ -2,7 +2,6 @@ import { redirect } from "next/navigation";
 import { readSession } from "@/lib/auth";
 import { getPrisma } from "@/lib/prisma";
 import { updateBdCommissionRate } from "./actions";
-import { PendingForm, PendingPlainSubmitButton } from "@/components/forms/pending-form";
 
 const prisma = getPrisma();
 
@@ -73,27 +72,19 @@ export default async function AdminBdConfigPage() {
                     <td className="p-3">{bd.username}</td>
                     <td className="p-3">{bd.email}</td>
                     <td className="p-3">
-                      <PendingForm action={updateBdCommissionRate} className="flex items-center gap-2">
-                        {(pending) => (
-                          <>
-                            <input type="hidden" name="userId" value={bd.id} />
-                            <input
-                              name="ratePercent"
-                              defaultValue={asPercentString(bd.bdCommissionRate)}
-                              placeholder="e.g. 35"
-                              className="w-28 rounded-xl border bg-background px-3 py-2"
-                              inputMode="decimal"
-                              disabled={pending}
-                            />
-                            <PendingPlainSubmitButton
-                              pending={pending}
-                              className="rounded-xl border px-3 py-2 hover:bg-muted"
-                            >
-                              Save
-                            </PendingPlainSubmitButton>
-                          </>
-                        )}
-                      </PendingForm>
+                      <form action={updateBdCommissionRate} className="flex items-center gap-2">
+                        <input type="hidden" name="userId" value={bd.id} />
+                        <input
+                          name="ratePercent"
+                          defaultValue={asPercentString(bd.bdCommissionRate)}
+                          placeholder="e.g. 35"
+                          className="w-28 rounded-xl border bg-background px-3 py-2"
+                          inputMode="decimal"
+                        />
+                        <button className="rounded-xl border px-3 py-2 hover:bg-muted">
+                          Save
+                        </button>
+                      </form>
                       <div className="text-xs text-muted-foreground mt-1">
                         Current: {bd.bdCommissionRate?.toString?.() ?? "null"}
                       </div>

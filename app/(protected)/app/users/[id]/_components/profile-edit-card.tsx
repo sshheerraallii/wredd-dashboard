@@ -6,10 +6,8 @@ import { Input } from "@/components/ui/input";
 
 export function ProfileEditCard({
   defaultFullName,
-  pending = false,
 }: {
   defaultFullName: string;
-  pending?: boolean;
 }) {
   const [preview, setPreview] = React.useState<string | null>(null);
 
@@ -23,7 +21,7 @@ export function ProfileEditCard({
       <div className="mt-5 grid gap-4">
         <div className="space-y-2">
           <label className="text-sm font-medium">Full name</label>
-          <Input name="fullName" defaultValue={defaultFullName} maxLength={60} disabled={pending} />
+          <Input name="fullName" defaultValue={defaultFullName} maxLength={60} />
         </div>
 
         <div className="space-y-2">
@@ -32,7 +30,6 @@ export function ProfileEditCard({
             name="avatar"
             type="file"
             accept="image/jpeg,image/png,image/webp"
-            disabled={pending}
             onChange={(e) => {
               const f = e.target.files?.[0];
               if (!f) return setPreview(null);
@@ -61,7 +58,7 @@ export function ProfileEditCard({
         </div>
 
         <div className="pt-2">
-          <Button type="submit" disabled={pending}>{pending ? "Saving…" : "Save"}</Button>
+          <Button type="submit">Save</Button>
         </div>
       </div>
     </div>

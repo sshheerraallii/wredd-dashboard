@@ -6,7 +6,6 @@ import { getPrisma } from "@/lib/prisma";
 
 import { updateMyProfile } from "./actions";
 import { ProfileEditCard } from "./_components/profile-edit-card";
-import { PendingForm } from "@/components/forms/pending-form";
 
 const prisma = getPrisma();
 
@@ -241,15 +240,13 @@ export default async function UserProfilePage({
 
       {/* Edit form (self only) */}
       {isSelf ? (
-        <PendingForm
-          action={updateMyProfile}
-          encType="multipart/form-data"
-          className="space-y-4"
-        >
-          {(pending) => (
-            <ProfileEditCard defaultFullName={user.fullName || ""} pending={pending} />
-          )}
-        </PendingForm>
+<form
+  action={updateMyProfile}
+  encType="multipart/form-data"
+  className="space-y-4"
+>
+          <ProfileEditCard defaultFullName={user.fullName || ""} />
+        </form>
       ) : null}
 
       {/* Snapshot */}

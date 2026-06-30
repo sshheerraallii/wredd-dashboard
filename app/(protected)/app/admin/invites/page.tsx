@@ -1,9 +1,9 @@
 import { redirect } from "next/navigation";
 import { readSession } from "@/lib/auth";
 import { getPrisma } from "@/lib/prisma";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { createInvite, revokeInvite, resendInvite } from "./actions";
-import { PendingForm, PendingSubmitButton } from "@/components/forms/pending-form";
 
 const prisma = getPrisma();
 
@@ -54,69 +54,61 @@ export default async function AdminInvitesPage({
       <div className="rounded-xl border bg-card p-4">
         <div className="text-sm font-medium">Create Invite</div>
 
-        <PendingForm action={createInvite} className="mt-4 grid gap-4 md:grid-cols-2">
-          {(pending) => (
-            <>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Email</label>
-                <Input name="email" placeholder="user@company.com" required disabled={pending} />
-              </div>
+        <form action={createInvite} className="mt-4 grid gap-4 md:grid-cols-2">
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Email</label>
+            <Input name="email" placeholder="user@company.com" required />
+          </div>
 
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Role</label>
-                <select
-                  name="role"
-                  className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-                  defaultValue="REMOTE_WORKER"
-                  required
-                  disabled={pending}
-                >
-                  <option value="MANAGER">MANAGER</option>
-                  <option value="BUSINESS_DEVELOPER">BUSINESS_DEVELOPER</option>
-                  <option value="REMOTE_WORKER">REMOTE_WORKER</option>
-                  <option value="ONSITE_EMPLOYEE">ONSITE_EMPLOYEE</option>
-                </select>
-              </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Role</label>
+            <select
+              name="role"
+              className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+              defaultValue="REMOTE_WORKER"
+              required
+            >
+              <option value="MANAGER">MANAGER</option>
+              <option value="BUSINESS_DEVELOPER">BUSINESS_DEVELOPER</option>
+              <option value="REMOTE_WORKER">REMOTE_WORKER</option>
+              <option value="ONSITE_EMPLOYEE">ONSITE_EMPLOYEE</option>
+            </select>
+          </div>
 
-              <div className="space-y-2 md:col-span-2">
-                <label className="text-sm font-medium">Worker Type (optional)</label>
-                <select
-                  name="workerType"
-                  className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-                  defaultValue=""
-                  disabled={pending}
-                >
-                  <option value="">(none)</option>
-                  <option value="ONSITE_VIDEO_EDITOR">ONSITE_VIDEO_EDITOR</option>
-                  <option value="REMOTE_VIDEO_EDITOR">REMOTE_VIDEO_EDITOR</option>
-                  <option value="ONSITE_ANIMATOR">ONSITE_ANIMATOR</option>
-                  <option value="REMOTE_ANIMATOR">REMOTE_ANIMATOR</option>
-                  <option value="WEB_DEVELOPMENT">WEB_DEVELOPMENT</option>
-                  <option value="OPERATIONS">OPERATIONS</option>
-                </select>
-              </div>
+          <div className="space-y-2 md:col-span-2">
+            <label className="text-sm font-medium">Worker Type (optional)</label>
+            <select
+              name="workerType"
+              className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+              defaultValue=""
+            >
+              <option value="">(none)</option>
+              <option value="ONSITE_VIDEO_EDITOR">ONSITE_VIDEO_EDITOR</option>
+              <option value="REMOTE_VIDEO_EDITOR">REMOTE_VIDEO_EDITOR</option>
+              <option value="ONSITE_ANIMATOR">ONSITE_ANIMATOR</option>
+              <option value="REMOTE_ANIMATOR">REMOTE_ANIMATOR</option>
+              <option value="WEB_DEVELOPMENT">WEB_DEVELOPMENT</option>
+              <option value="OPERATIONS">OPERATIONS</option>
+            </select>
+          </div>
 
-              <div className="space-y-2 md:col-span-2">
-                <label className="text-sm font-medium">Departments</label>
-                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {departments.map((d) => (
-                    <label key={d.id} className="flex items-center gap-2 rounded-md border p-2 text-sm">
-                      <input type="checkbox" name="departmentIds" value={d.id} disabled={pending} />
-                      <span>{d.name}</span>
-                    </label>
-                  ))}
-                </div>
-                <div className="text-xs text-muted-foreground">At least 1 is required.</div>
-              </div>
+          <div className="space-y-2 md:col-span-2">
+            <label className="text-sm font-medium">Departments</label>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {departments.map((d) => (
+                <label key={d.id} className="flex items-center gap-2 rounded-md border p-2 text-sm">
+                  <input type="checkbox" name="departmentIds" value={d.id} />
+                  <span>{d.name}</span>
+                </label>
+              ))}
+            </div>
+            <div className="text-xs text-muted-foreground">At least 1 is required.</div>
+          </div>
 
-              <div className="md:col-span-2">
-                <PendingSubmitButton pending={pending} pendingLabel="Sending…">
-                  Send Invite
-                </PendingSubmitButton>
-              </div>
-            </>
-          )}
-        </PendingForm>
+          <div className="md:col-span-2">
+            <Button type="submit">Send Invite</Button>
+          </div>
+        </form>
       </div>
 
       <div className="rounded-xl border bg-card p-4">
@@ -146,37 +138,19 @@ export default async function AdminInvitesPage({
                   </div>
 
                   <div className="flex gap-2">
-                    <PendingForm action={resendInvite}>
-                      {(pending) => (
-                        <>
-                          <input type="hidden" name="id" value={inv.id} />
-                          <PendingSubmitButton
-                            pending={pending}
-                            pendingLabel="Resending…"
-                            variant="secondary"
-                            disabled={inv.status !== "PENDING"}
-                          >
-                            Resend
-                          </PendingSubmitButton>
-                        </>
-                      )}
-                    </PendingForm>
+                    <form action={resendInvite}>
+                      <input type="hidden" name="id" value={inv.id} />
+                      <Button type="submit" variant="secondary" disabled={inv.status !== "PENDING"}>
+                        Resend
+                      </Button>
+                    </form>
 
-                    <PendingForm action={revokeInvite}>
-                      {(pending) => (
-                        <>
-                          <input type="hidden" name="id" value={inv.id} />
-                          <PendingSubmitButton
-                            pending={pending}
-                            pendingLabel="Revoking…"
-                            variant="destructive"
-                            disabled={inv.status !== "PENDING"}
-                          >
-                            Revoke
-                          </PendingSubmitButton>
-                        </>
-                      )}
-                    </PendingForm>
+                    <form action={revokeInvite}>
+                      <input type="hidden" name="id" value={inv.id} />
+                      <Button type="submit" variant="destructive" disabled={inv.status !== "PENDING"}>
+                        Revoke
+                      </Button>
+                    </form>
                   </div>
                 </div>
 

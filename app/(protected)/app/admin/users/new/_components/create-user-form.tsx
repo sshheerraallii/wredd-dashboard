@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -22,19 +21,16 @@ export default function CreateUserForm({ departments }: { departments: Dept[] })
   const [departmentIds, setDepartmentIds] = React.useState<string[]>([]);
   const [role, setRole] = React.useState<string>("REMOTE_WORKER");
   const [workerType, setWorkerType] = React.useState<string>("REMOTE_VIDEO_EDITOR");
-  const [pending, start] = useTransition();
 
   return (
     <form
       className="space-y-6"
-      action={(fd: FormData) => {
-        start(async () => {
-          fd.set("role", role);
-          fd.set("workerType", workerType);
-          fd.set("departmentIds", JSON.stringify(departmentIds));
-          await createUser(fd);
-          router.push("/app/admin/users?ok=User%20created");
-        });
+      action={async (fd) => {
+        fd.set("role", role);
+        fd.set("workerType", workerType);
+        fd.set("departmentIds", JSON.stringify(departmentIds));
+        await createUser(fd);
+        router.push("/app/admin/users?ok=User%20created");
       }}
     >
       <div className="grid gap-4 md:grid-cols-2">
@@ -112,8 +108,8 @@ export default function CreateUserForm({ departments }: { departments: Dept[] })
       </div>
 
       <div className="flex gap-2">
-        <Button type="submit" disabled={pending}>{pending ? "Creating…" : "Create"}</Button>
-        <Button type="button" variant="secondary" disabled={pending} onClick={() => router.push("/app/admin/users")}>
+        <Button type="submit">Create</Button>
+        <Button type="button" variant="secondary" onClick={() => router.push("/app/admin/users")}>
           Cancel
         </Button>
       </div>

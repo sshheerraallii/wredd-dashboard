@@ -14,7 +14,6 @@ import {
 } from "@/lib/bd-commission/queries";
 import { fmtMoneyPkr } from "@/lib/bd-commission/totals";
 import { getPrisma } from "@/lib/prisma";
-import { PendingForm, PendingPlainSubmitButton } from "@/components/forms/pending-form";
 
 import {
   createBdAdjustment,
@@ -340,60 +339,52 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
       {/* Add Adjustment */}
       <div className="rounded border p-3 space-y-2">
         <div className="text-sm font-medium">Add Adjustment (manual)</div>
-        <PendingForm action={createAdjAction} className="flex flex-wrap gap-2 items-end">
-          {(pending) => (
-            <>
-              <input type="hidden" name="returnTo" value={returnToForAdj} />
+        <form action={createAdjAction} className="flex flex-wrap gap-2 items-end">
+          <input type="hidden" name="returnTo" value={returnToForAdj} />
 
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-muted-foreground">BD</label>
-                <select name="bdUserId" className="border rounded px-2 py-1 text-sm" required disabled={pending}>
-                  <option value="">Select BD</option>
-                  {bds.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.fullName} @{b.username}
-                    </option>
-                  ))}
-                </select>
-              </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted-foreground">BD</label>
+            <select name="bdUserId" className="border rounded px-2 py-1 text-sm" required>
+              <option value="">Select BD</option>
+              {bds.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.fullName} @{b.username}
+                </option>
+              ))}
+            </select>
+          </div>
 
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-muted-foreground">MonthKey (YYYY-MM)</label>
-                <input
-                  name="monthKey"
-                  defaultValue={defaultAdjMonth}
-                  className="border rounded px-2 py-1 text-sm"
-                  placeholder={defaultAdjMonth}
-                  required
-                  disabled={pending}
-                />
-              </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted-foreground">MonthKey (YYYY-MM)</label>
+            <input
+              name="monthKey"
+              defaultValue={defaultAdjMonth}
+              className="border rounded px-2 py-1 text-sm"
+              placeholder={defaultAdjMonth}
+              required
+            />
+          </div>
 
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-muted-foreground">Amount (PKR)</label>
-                <input
-                  name="amountPkr"
-                  className="border rounded px-2 py-1 text-sm"
-                  placeholder="e.g. 5000 or -2500"
-                  required
-                  disabled={pending}
-                />
-              </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted-foreground">Amount (PKR)</label>
+            <input
+              name="amountPkr"
+              className="border rounded px-2 py-1 text-sm"
+              placeholder="e.g. 5000 or -2500"
+              required
+            />
+          </div>
 
-              <div className="flex flex-col gap-1 min-w-[280px]">
-                <label className="text-xs text-muted-foreground">Reason / Note</label>
-                <input name="note" className="border rounded px-2 py-1 text-sm" placeholder="Why this adjustment?" required disabled={pending} />
-              </div>
+          <div className="flex flex-col gap-1 min-w-[280px]">
+            <label className="text-xs text-muted-foreground">Reason / Note</label>
+            <input name="note" className="border rounded px-2 py-1 text-sm" placeholder="Why this adjustment?" required />
+          </div>
 
-              <PendingPlainSubmitButton pending={pending} pendingLabel="Adding…" className="border rounded px-3 py-1 text-sm">
-                Add
-              </PendingPlainSubmitButton>
-              <div className="text-xs text-muted-foreground">
-                Creates a CLEARING ledger row. Resolver will move it to DUE on due date.
-              </div>
-            </>
-          )}
-        </PendingForm>
+          <button className="border rounded px-3 py-1 text-sm">Add</button>
+          <div className="text-xs text-muted-foreground">
+            Creates a CLEARING ledger row. Resolver will move it to DUE on due date.
+          </div>
+        </form>
       </div>
 
       {/* Tabs */}
@@ -502,29 +493,23 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
             </div>
           </div>
 
-          <PendingForm action={markAllPaidOnPageAction}>
-            {(pending) => (
-              <>
-                <input type="hidden" name="returnTo" value={qp(current, { tab: "DUE" })} />
+          <form action={markAllPaidOnPageAction}>
+            <input type="hidden" name="returnTo" value={qp(current, { tab: "DUE" })} />
 
-                {rows
-                  .filter((r: any) => r?.kind === "adjustment")
-                  .map((r: any) => (
-                    <input key={`a:${r.id}`} type="hidden" name="adjustmentIds" value={r.id} />
-                  ))}
+            {rows
+              .filter((r: any) => r?.kind === "adjustment")
+              .map((r: any) => (
+                <input key={`a:${r.id}`} type="hidden" name="adjustmentIds" value={r.id} />
+              ))}
 
-                {rows
-                  .filter((r: any) => r?.kind !== "adjustment")
-                  .map((r: any) => (
-                    <input key={`c:${r.id}`} type="hidden" name="commissionIds" value={r.id} />
-                  ))}
+            {rows
+              .filter((r: any) => r?.kind !== "adjustment")
+              .map((r: any) => (
+                <input key={`c:${r.id}`} type="hidden" name="commissionIds" value={r.id} />
+              ))}
 
-                <PendingPlainSubmitButton pending={pending} pendingLabel="Marking…" className="border rounded px-3 py-1 text-sm">
-                  Mark ALL (this page) Paid
-                </PendingPlainSubmitButton>
-              </>
-            )}
-          </PendingForm>
+            <button className="border rounded px-3 py-1 text-sm">Mark ALL (this page) Paid</button>
+          </form>
         </div>
       ) : null}
 
@@ -742,18 +727,12 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
 
                     <td className="p-2">
                       {tab === "DUE" ? (
-                        <PendingForm action={markRowPaidAction}>
-                          {(pending) => (
-                            <>
-                              <input type="hidden" name="kind" value={r.kind ?? "commission"} />
-                              <input type="hidden" name="id" value={r.id} />
-                              <input type="hidden" name="returnTo" value={qp(current)} />
-                              <PendingPlainSubmitButton pending={pending} pendingLabel="Marking…" className="border rounded px-2 py-1 text-xs">
-                                Mark Paid
-                              </PendingPlainSubmitButton>
-                            </>
-                          )}
-                        </PendingForm>
+                        <form action={markRowPaidAction}>
+                          <input type="hidden" name="kind" value={r.kind ?? "commission"} />
+                          <input type="hidden" name="id" value={r.id} />
+                          <input type="hidden" name="returnTo" value={qp(current)} />
+                          <button className="border rounded px-2 py-1 text-xs">Mark Paid</button>
+                        </form>
                       ) : (
                         <span className="text-xs text-muted-foreground">-</span>
                       )}

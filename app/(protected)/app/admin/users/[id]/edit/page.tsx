@@ -4,7 +4,6 @@ import { requireAdmin } from "@/lib/rbac";
 import { requireRole } from "@/lib/guards";
 import { updateUserDepartments, updateUserPerformance } from "../actions";
 import { UserDangerZone } from "./_components/user-danger-zone";
-import { PendingForm, PendingPlainSubmitButton } from "@/components/forms/pending-form";
 
 const prisma = getPrisma();
 
@@ -111,114 +110,96 @@ export default async function UserEditPage({
       {err ? <p className="text-sm text-red-600">{err}</p> : null}
 
       {/* Departments */}
-      <PendingForm action={onSave} className="space-y-4">
-        {(pending) => (
-          <>
-            <div className="border rounded-lg p-4">
-              <h2 className="font-medium mb-3">Departments</h2>
+      <form action={onSave} className="space-y-4">
+        <div className="border rounded-lg p-4">
+          <h2 className="font-medium mb-3">Departments</h2>
 
-              {departments.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No departments found. Create them first.
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  {departments.map((d) => (
-                    <label key={d.id} className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        name="departmentIds"
-                        value={d.id}
-                        defaultChecked={selected.has(d.id)}
-                        disabled={pending}
-                      />
-                      {d.name}
-                    </label>
-                  ))}
-                </div>
-              )}
+          {departments.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No departments found. Create them first.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {departments.map((d) => (
+                <label key={d.id} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    name="departmentIds"
+                    value={d.id}
+                    defaultChecked={selected.has(d.id)}
+                  />
+                  {d.name}
+                </label>
+              ))}
             </div>
+          )}
+        </div>
 
-            <PendingPlainSubmitButton
-              pending={pending}
-              className="px-4 py-2 rounded-md bg-primary text-primary-foreground"
-            >
-              Save Departments
-            </PendingPlainSubmitButton>
-          </>
-        )}
-      </PendingForm>
+        <button className="px-4 py-2 rounded-md bg-primary text-primary-foreground">
+          Save Departments
+        </button>
+      </form>
 
       {/* Performance Target (before DangerZone) */}
-      <PendingForm action={onSavePerformance} className="space-y-4">
-        {(pending) => (
-          <>
-            <div className="border rounded-lg p-4 space-y-3">
-              <h2 className="font-medium">Onsite performance</h2>
+      <form action={onSavePerformance} className="space-y-4">
+        <div className="border rounded-lg p-4 space-y-3">
+          <h2 className="font-medium">Onsite performance</h2>
 
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="space-y-1">
-                  <label className="text-sm font-medium">Monthly target points</label>
-                  <input
-                    name="targetMonthlyPoints"
-                    type="number"
-                    min={0}
-                    defaultValue={user.targetMonthlyPoints ?? 0}
-                    className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-                    disabled={pending}
-                  />
-                  <div className="text-xs text-muted-foreground">
-                    Used for onsite accuracy (prorated if joined mid-month).
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-sm font-medium">Joined at</label>
-                  <input
-                    name="joinedAt"
-                    type="date"
-                    defaultValue={joinedDefault}
-                    className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-                    disabled={pending}
-                  />
-                  <div className="text-xs text-muted-foreground">
-                    Controls prorating. Keep createdAt separate for audit/history.
-                  </div>
-                </div>
-              </div>
-
-           {user.role === "ONSITE_EMPLOYEE" ? (
-                <div className="space-y-1">
-                  <label className="text-sm font-medium">Onsite hour rate (PKR)</label>
-                  <input
-                    name="onsiteHourRatePkr"
-                    type="number"
-                    min={0}
-                    defaultValue={user.onsiteHourRatePkr ?? ""}
-                    placeholder="Leave blank to use global avg rate"
-                    className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-                    disabled={pending}
-                  />
-                  <div className="text-xs text-muted-foreground">
-                    Per-hour cost used in BD commission overhead. Falls back to monthly avg if blank.
-                  </div>
-                </div>
-              ) : null}
-
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Monthly target points</label>
+              <input
+                name="targetMonthlyPoints"
+                type="number"
+                min={0}
+                defaultValue={user.targetMonthlyPoints ?? 0}
+                className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+              />
               <div className="text-xs text-muted-foreground">
-                Created: {new Date(user.createdAt).toLocaleString()}
+                Used for onsite accuracy (prorated if joined mid-month).
               </div>
             </div>
 
-            <PendingPlainSubmitButton
-              pending={pending}
-              className="px-4 py-2 rounded-md bg-primary text-primary-foreground"
-            >
-              Save Performance
-            </PendingPlainSubmitButton>
-          </>
-        )}
-      </PendingForm>
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Joined at</label>
+              <input
+                name="joinedAt"
+                type="date"
+                defaultValue={joinedDefault}
+                className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+              />
+              <div className="text-xs text-muted-foreground">
+                Controls prorating. Keep createdAt separate for audit/history.
+              </div>
+            </div>
+          </div>
+
+       {user.role === "ONSITE_EMPLOYEE" ? (
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Onsite hour rate (PKR)</label>
+              <input
+                name="onsiteHourRatePkr"
+                type="number"
+                min={0}
+                defaultValue={user.onsiteHourRatePkr ?? ""}
+                placeholder="Leave blank to use global avg rate"
+                className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+              />
+              <div className="text-xs text-muted-foreground">
+                Per-hour cost used in BD commission overhead. Falls back to monthly avg if blank.
+              </div>
+            </div>
+          ) : null}
+
+          <div className="text-xs text-muted-foreground">
+            Created: {new Date(user.createdAt).toLocaleString()}
+          </div>
+        </div>
+
+        <button className="px-4 py-2 rounded-md bg-primary text-primary-foreground">
+          Save Performance
+        </button>
+      </form>
 
       <UserDangerZone
         userId={user.id}
