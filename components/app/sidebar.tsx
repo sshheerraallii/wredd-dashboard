@@ -78,6 +78,7 @@ function buildNavGroups(args: {
           { href: "/app/admin/bd-config", label: "BD Configs" },
           { href: "/app/admin/targets", label: "BD Targets" },
           { href: "/app/admin/bd-commission", label: "BD Commission Ledger" },
+          { href: "/app/admin/client-payments", label: "Client Payments" },
         ],
       },
       {

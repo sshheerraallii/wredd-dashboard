@@ -59,6 +59,7 @@ model User {
   targetSnapshotsTaken      BdTargetSnapshot[]       @relation("SnapshotBy")
   manualPerfPoints          ManualPerformancePoint[] @relation("ManualPerfUser")
   manualPerfPointsCreated   ManualPerformancePoint[] @relation("ManualPerfCreatedBy")
+  clientPaymentReceiptsRecorded ClientPaymentReceipt[] @relation("ClientPaymentReceiptRecordedBy")
 
   @@index([role])
   @@index([workerType])
@@ -215,6 +216,7 @@ model Project {
   paymentLines                     ProjectPaymentLine[]
   rating                           ProjectRating?
   watchers                         ProjectWatcher[]
+  clientPaymentReceipts            ClientPaymentReceipt[]
 
   @@index([departmentId])
   @@index([status])
@@ -409,6 +411,54 @@ model ProjectPaymentLine {
   @@index([userId, status])
   @@index([projectId])
   @@index([payableOn])
+}
+
+/// *
+///    * ---- Client Payment Tracking (Super Admin only) ----
+///    * Tracks whether clients have paid for a project (separate from
+///    * ProjectPaymentLine, which tracks WHAT WE OWE WORKERS).
+///    * A project's "received" status is derived by comparing the sum of
+///    * its receipts against ProjectFinance.priceUsd — never stored directly.
+model PaymentAccount {
+  id         String              @id @default(cuid())
+  name       String              @unique
+  type       PaymentAccountType  @default(OTHER)
+  ownerLabel String?
+  isActive   Boolean             @default(true)
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
+  receipts   ClientPaymentReceipt[]
+
+  @@index([isActive])
+}
+
+model ClientPaymentReceipt {
+  id              String            @id @default(cuid())
+  projectId       String
+  accountId       String
+  amountUsd       Decimal           @db.Decimal(12, 2)
+  receivedAt      DateTime
+  /// *
+  ///    * fundStatus: lifecycle of the money after it lands in the account.
+  ///    * IN_HAND               -> received, sitting in the account, untouched
+  ///    * UTILIZED              -> spent directly out of that account, will never move to WREDD FBL
+  ///    * SETTLED_TO_WREDD_FBL  -> physically transferred into the main WREDD FBL account
+  fundStatus      ReceiptFundStatus @default(IN_HAND)
+  statusNote      String?
+  statusUpdatedAt DateTime?
+  note            String?
+  recordedById    String
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  project    Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  account    PaymentAccount @relation(fields: [accountId], references: [id])
+  recordedBy User           @relation("ClientPaymentReceiptRecordedBy", fields: [recordedById], references: [id])
+
+  @@index([projectId])
+  @@index([accountId])
+  @@index([receivedAt])
+  @@index([fundStatus])
 }
 
 model OnsiteProjectRating {
@@ -718,6 +768,19 @@ enum PaymentLineStatus {
   PAID
   EXCEPTION_PAID
   VOIDED
+}
+
+enum PaymentAccountType {
+  PAYONEER
+  FIVERR
+  BANK
+  OTHER
+}
+
+enum ReceiptFundStatus {
+  IN_HAND
+  UTILIZED
+  SETTLED_TO_WREDD_FBL
 }
 
 enum InviteStatus {
