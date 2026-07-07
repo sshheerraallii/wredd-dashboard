@@ -7,7 +7,7 @@ const prisma = getPrisma();
  *
  * Target uses each month's CONFIGURED working days (MonthlyFinanceConfig.workingDays,
  * fallback 25): for every month the range touches, the worker's monthly target is
- * scaled by (actual Mon-Fri days of that month inside the range ÷ that month's
+ * scaled by (actual Mon–Sat days of that month inside the range ÷ that month's
  * configured working days), then summed. A range covering a full month therefore
  * contributes that month's full target.
  *
@@ -31,15 +31,14 @@ function endOfMonthUTC(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0, 23, 59, 59, 999));
 }
 
-/** Count Mon–Fri days between two dates inclusive (UTC). */
+/** Count WREDD working days (Mon–Sat, Sunday excluded) inclusive (UTC). */
 function countWorkingDays(from: Date, to: Date): number {
   if (to < from) return 0;
   let count = 0;
   const cur = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()));
   const end = new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate()));
   while (cur <= end) {
-    const day = cur.getUTCDay();
-    if (day !== 0 && day !== 6) count++;
+    if (cur.getUTCDay() !== 0) count++; // 0 = Sunday
     cur.setUTCDate(cur.getUTCDate() + 1);
   }
   return count;
@@ -79,7 +78,9 @@ function targetForRange(
 
     const wd = countWorkingDays(ovStart, ovEnd);
     const cfgWD = cfgWorkingDays.get(mKey) ?? DEFAULT_WORKING_DAYS;
-    if (cfgWD > 0) total += monthlyTarget * (wd / cfgWD);
+    // Cap at 1.0: a full month has ~26 Mon–Sat days over a ~25-day divisor,
+    // which would otherwise contribute >100% of that month's target.
+    if (cfgWD > 0) total += monthlyTarget * Math.min(wd / cfgWD, 1);
 
     cur = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth() + 1, 1));
   }

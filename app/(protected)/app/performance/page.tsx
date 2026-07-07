@@ -26,6 +26,11 @@ import { sumManualForUser, sumManualByMonth, listManualForUser } from "@/lib/ons
 import { ManualPointsDialog } from "./_components/manual-points-dialog";
 import { addManualPerformancePoint, deleteManualPerformancePoint } from "./actions";
 import { CommitmentBadge, CommitmentIndexCard } from "@/components/app/commitment-index";
+import {
+  proratedMonthlyTarget,
+  getAllWorkingDaysMap,
+  DEFAULT_WORKING_DAYS,
+} from "@/lib/onsite-points/target";
 
 const prisma = getPrisma();
 
@@ -107,65 +112,9 @@ function startOfDay(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
 }
 
-/**
- * Count Mon–Fri days between two dates (both inclusive).
- */
-function countWorkingDays(from: Date, to: Date): number {
-  let count = 0;
-  const cur = new Date(from);
-  while (cur <= to) {
-    const d = cur.getDay();
-    if (d !== 0 && d !== 6) count++;
-    cur.setDate(cur.getDate() + 1);
-  }
-  return count;
-}
-
-/**
- * Returns the pro-rated monthly target for a given month.
- *
- * - Current month → pro-rated by working days elapsed (Mon–Fri) ÷ 25.
- *   This stops the accuracy from tanking at the start of a month.
- * - Past months → pro-rated by calendar days (only matters if the worker
- *   joined mid-month; fully-worked months return the full target).
- * - Join-date guard: if the worker joined after this month ends, returns 0.
- */
-function proratedMonthlyTarget(params: {
-  targetMonthlyPoints: number;
-  joinedAt: Date;
-  monthKey: string;
-}): number {
-  const T = params.targetMonthlyPoints;
-  if (!T || T <= 0) return 0;
-
-  const { start, end } = monthRangeFromKey(params.monthKey);
-  const now = new Date();
-  const currentMonthKey = monthKeyOf(now);
-  const isCurrentMonth = params.monthKey === currentMonthKey;
-
-  const joinDay = startOfDay(params.joinedAt);
-  if (joinDay >= end) return 0;
-
-  const effectiveStart = joinDay > start ? joinDay : start;
-
-  if (isCurrentMonth) {
-    const todayStart = startOfDay(now);
-    if (todayStart < effectiveStart) return 0;
-    const elapsed = countWorkingDays(effectiveStart, todayStart);
-    if (elapsed === 0) return 0;
-    return (T * elapsed) / 25;
-  }
-
-  // Past month
-  if (joinDay < start) return T;
-
-  const D = daysInMonth(start);
-  const monthEndInclusive = new Date(end.getTime() - 1);
-  const activeEnd = startOfDay(monthEndInclusive);
-  const msPerDay = 24 * 60 * 60 * 1000;
-  const activeDays = Math.floor((activeEnd.getTime() - joinDay.getTime()) / msPerDay) + 1;
-  return (T * activeDays) / D;
-}
+// `countWorkingDays` and `proratedMonthlyTarget` now live in
+// "@/lib/onsite-points/target" (single source of truth; Mon–Sat calendar,
+// config-driven divisor). Imported at the top of this file.
 
 function listMonthKeysInclusive(from: Date, to: Date) {
   const out: string[] = [];
@@ -498,6 +447,7 @@ async function onsiteMonthlyAccuracyAvg(params: {
   if (prevMonth < startMonth) return null;
 
   const monthKeys = listMonthKeysInclusive(startMonth, prevMonth);
+  const wdMap = await getAllWorkingDaysMap();
 
   const credits = await prisma.onsitePointCredit.findMany({
     where: { userId: params.userId },
@@ -523,6 +473,7 @@ async function onsiteMonthlyAccuracyAvg(params: {
       targetMonthlyPoints: params.targetMonthlyPoints,
       joinedAt: params.joinedAt,
       monthKey: mk,
+      workingDays: wdMap.get(mk) ?? DEFAULT_WORKING_DAYS,
     });
     if (!target || target <= 0) continue;
     accuracies.push((achieved / target) * 100);
@@ -658,6 +609,7 @@ async function onsiteAccuracyAvgForMonthKeys(params: {
   joinedAt: Date;
 }) {
   if (!params.monthKeys.length) return null;
+  const wdMap = await getAllWorkingDaysMap();
 
   const credits = await prisma.onsitePointCredit.findMany({
     where: { userId: params.userId, monthKey: { in: params.monthKeys } },
@@ -683,6 +635,7 @@ async function onsiteAccuracyAvgForMonthKeys(params: {
       targetMonthlyPoints: params.targetMonthlyPoints,
       joinedAt: params.joinedAt,
       monthKey: mk,
+      workingDays: wdMap.get(mk) ?? DEFAULT_WORKING_DAYS,
     });
 
     if (!target || target <= 0) continue;
@@ -790,6 +743,11 @@ export default async function PerformancePage({
 
   const now = new Date();
   const currentMk = monthKeyOf(now);
+
+  // Configured working days per month (Mon–Sat divisor). Any month without a
+  // configured value falls back to DEFAULT_WORKING_DAYS.
+  const wdMap = await getAllWorkingDaysMap();
+
   // Monthly tab is selectable via ?month=YYYY-MM (defaults to current month).
   // Never allow a future month.
   const requestedMonth = clampMonthKey(searchParams?.month);
@@ -849,6 +807,7 @@ export default async function PerformancePage({
             targetMonthlyPoints: u.targetMonthlyPoints,
             joinedAt: u.joinedAt,
             monthKey: mk,
+            workingDays: wdMap.get(mk) ?? DEFAULT_WORKING_DAYS,
           });
           accuracy = t > 0 ? Math.round((pts.achievedPoints / t) * 100) : null;
         } else {
@@ -1002,6 +961,7 @@ export default async function PerformancePage({
         targetMonthlyPoints: selectedOnsite.targetMonthlyPoints,
         joinedAt: selectedOnsite.joinedAt,
         monthKey: mk,
+        workingDays: wdMap.get(mk) ?? DEFAULT_WORKING_DAYS,
       });
       accuracy = t > 0 ? Math.round((pts.achievedPoints / t) * 100) : null;
       // Projected accuracy = finalized + live estimated points, same target.
@@ -1357,6 +1317,7 @@ export default async function PerformancePage({
         targetMonthlyPoints: selectedOnsite.targetMonthlyPoints,
         joinedAt: selectedOnsite.joinedAt,
         monthKey: k,
+        workingDays: wdMap.get(k) ?? DEFAULT_WORKING_DAYS,
       });
       const acc = target > 0 ? Math.round((pointsSum / target) * 100) : null;
       return {
