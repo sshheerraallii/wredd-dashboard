@@ -89,6 +89,7 @@ function buildNavGroups(args: {
           { href: "/app/admin/payments", label: "Payments Summary" },
           { href: "/app/admin/payments/worker", label: "Worker Payments" },
           { href: "/app/performance", label: "Performance" },
+          { href: "/app/pace", label: "Pace" },
          
            { href: "/app/admin/ops-tasks", label: "Ops Tasks" },      // ← new
     { href: "/app/ops-tasks", label: "My Tasks" },             // ← new
@@ -134,6 +135,7 @@ function buildNavGroups(args: {
           { href: "/app/admin/payments", label: "Payments Summary" },
           { href: "/app/admin/payments/worker", label: "Worker Payments" },
           { href: "/app/performance", label: "Performance" },
+          { href: "/app/pace", label: "Pace" },
           { href: "/app/bd/targets", label: "BD Targets" },
           
           { href: "/app/admin/ops-tasks", label: "Ops Tasks" },
@@ -158,6 +160,7 @@ function buildNavGroups(args: {
           { href: "/app/projects", label: "All Projects" },
           { href: "/app/projects/new", label: "Create Project" },
           { href: "/app/ops-tasks", label: "My Tasks" },
+          { href: "/app/pace", label: "Pace" },
         ],
       },
       {
