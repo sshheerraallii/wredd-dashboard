@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { AnnouncementBanner } from "@/components/app/announcement-banner";
 import { AnnouncementBannerDismissable } from "@/components/app/announcement-banner-dismissable";
 import { markProjectSeenAction } from "@/lib/actions/mark-seen";
+import { PaceCard } from "@/components/app/pace-card";
 
 const prisma = getPrisma();
 
@@ -351,6 +352,8 @@ export default async function WorkerProjectsPage({
       <AnnouncementBannerDismissable storageKey="wredd:announce:projects">
         <AnnouncementBanner />
       </AnnouncementBannerDismissable>
+
+      {role === "ONSITE_EMPLOYEE" ? <PaceCard userId={userId} /> : null}
 
       <div>
         <h1 className="text-xl font-semibold">My Projects</h1>
