@@ -79,6 +79,13 @@ export function ProjectPaymentPopup(props: {
           Completed {fmtDate(row.firstCompletedAt)}
         </div>
 
+        {row.clientName || row.clientUsername ? (
+          <div className="text-sm text-muted-foreground -mt-2">
+            Client: {row.clientName ?? "-"}
+            {row.clientUsername ? ` (@${row.clientUsername})` : ""}
+          </div>
+        ) : null}
+
         <div className="grid grid-cols-3 gap-2 md:grid-cols-5">
           <div className="border rounded-lg p-3">
             <div className="text-xs text-muted-foreground">Price</div>

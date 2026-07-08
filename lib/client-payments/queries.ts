@@ -63,6 +63,7 @@ export type LedgerRow = {
   netExpectedUsd: number;
   portal: string;
   clientName: string | null;
+  clientUsername: string | null;
   totalReceived: number;
   paymentStatus: PaymentStatus;
   receipts: {
@@ -109,6 +110,7 @@ export async function getClientPaymentsLedger(params: {
         select: {
           priceUsd: true,
           clientName: true,
+          clientUsername: true,
           portal: true,
           platformFeeUsd: true,
           platformFeePercent: true,
@@ -156,6 +158,7 @@ export async function getClientPaymentsLedger(params: {
       netExpectedUsd,
       portal: p.finance?.portal ?? "OTHER",
       clientName: p.finance?.clientName ?? null,
+      clientUsername: p.finance?.clientUsername ?? null,
       totalReceived,
       paymentStatus: deriveStatus(totalReceived, netExpectedUsd),
       receipts,
@@ -182,6 +185,7 @@ export async function getProjectForPaymentDetail(projectId: string) {
         select: {
           priceUsd: true,
           clientName: true,
+          clientUsername: true,
           portal: true,
           platformFeeUsd: true,
           platformFeePercent: true,

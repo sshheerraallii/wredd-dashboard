@@ -86,8 +86,11 @@ export default async function ClientPaymentDetailPage({
             {project.department?.name ?? "-"} · {project.bdOwner?.fullName ?? "No BD"} · Completed{" "}
             {fmtDate(project.firstCompletedAt)}
           </div>
-          {project.finance?.clientName ? (
-            <div className="text-sm text-muted-foreground">Client: {project.finance.clientName}</div>
+          {project.finance?.clientName || project.finance?.clientUsername ? (
+            <div className="text-sm text-muted-foreground">
+              Client: {project.finance?.clientName ?? "-"}
+              {project.finance?.clientUsername ? ` (@${project.finance.clientUsername})` : ""}
+            </div>
           ) : null}
         </div>
 

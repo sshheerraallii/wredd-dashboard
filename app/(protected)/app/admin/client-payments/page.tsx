@@ -226,6 +226,12 @@ export default async function ClientPaymentsPage({
                   <div className="text-xs text-muted-foreground">
                     {r.department?.name ?? "-"} · {r.bdOwner?.fullName ?? "No BD"} · {fmtDate(r.firstCompletedAt)}
                   </div>
+                  {r.clientName || r.clientUsername ? (
+                    <div className="text-xs text-muted-foreground">
+                      {r.clientName ?? "-"}
+                      {r.clientUsername ? ` (@${r.clientUsername})` : ""}
+                    </div>
+                  ) : null}
                 </div>
                 <div className="col-span-1 text-xs">{portalLabel(r.portal)}</div>
                 <div className="col-span-1 text-right">{fmtUsd(r.priceUsd)}</div>
