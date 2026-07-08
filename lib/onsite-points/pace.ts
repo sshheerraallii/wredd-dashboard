@@ -4,7 +4,7 @@ import {
   getAllWorkingDaysMap,
   DEFAULT_WORKING_DAYS,
 } from "@/lib/onsite-points/target";
-import { getUserEstimatedPoints } from "@/lib/onsite-points/aggregate";
+import { getUserEstimatedPoints, getEstimatedForUsers } from "@/lib/onsite-points/aggregate";
 import { resolveEverDelivered, type ProjectStatus } from "@/lib/onsite-points/estimate";
 import { sumManualForUser } from "@/lib/onsite-points/manual";
 
@@ -308,4 +308,138 @@ export async function buildPaceQueue(
   );
 
   return { eligible: true, projectedAccuracy, lines, totalWorkHours, underload };
+}
+
+/**
+ * Batch version of buildPaceQueue for the manager/BD/admin "Pace" roster.
+ * Returns a Map keyed by userId. Ineligible users (not onsite, or no target)
+ * get an { eligible:false } entry. ~6 queries total regardless of headcount:
+ * one user lookup, the working-days map, the batch estimate, and grouped
+ * credit / manual / assignment reads.
+ */
+export async function buildPaceQueueForUsers(
+  userIds: string[],
+  now: Date = new Date()
+): Promise<Map<string, PaceResult>> {
+  const out = new Map<string, PaceResult>();
+  const ids = Array.from(new Set(userIds.filter(Boolean)));
+  if (ids.length === 0) return out;
+
+  const emptyResult = (): PaceResult => ({
+    eligible: false,
+    projectedAccuracy: null,
+    lines: [],
+    totalWorkHours: 0,
+    underload: false,
+  });
+  for (const id of ids) out.set(id, emptyResult());
+
+  const mk = monthKeyOf(now);
+
+  const users = await prisma.user.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, role: true, targetMonthlyPoints: true, joinedAt: true },
+  });
+
+  const eligibleUsers = users.filter(
+    (u) =>
+      u.role === "ONSITE_EMPLOYEE" &&
+      u.joinedAt &&
+      u.targetMonthlyPoints &&
+      u.targetMonthlyPoints > 0
+  );
+  const eligibleIds = eligibleUsers.map((u) => u.id);
+  if (eligibleIds.length === 0) return out;
+
+  const [wdMap, estMap, creditRows, manualRows, assignments] = await Promise.all([
+    getAllWorkingDaysMap(),
+    getEstimatedForUsers(eligibleIds),
+    prisma.onsitePointCredit.groupBy({
+      by: ["userId"],
+      where: { userId: { in: eligibleIds }, monthKey: mk },
+      _sum: { points: true },
+    }),
+    prisma.manualPerformancePoint.groupBy({
+      by: ["userId"],
+      where: { userId: { in: eligibleIds }, monthKey: mk },
+      _sum: { points: true },
+    }),
+    prisma.projectAssignment.findMany({
+      where: {
+        userId: { in: eligibleIds },
+        unassignedAt: null,
+        outcome: { not: "CANCELLED" as any },
+        project: { status: { in: ["IN_PROGRESS", "REVISION"] as any } },
+      },
+      select: {
+        userId: true,
+        assignedAt: true,
+        allocatedHours: true,
+        project: {
+          select: {
+            id: true,
+            title: true,
+            status: true,
+            firstDeliveredAt: true,
+            firstCompletedAt: true,
+          },
+        },
+      },
+      orderBy: { assignedAt: "asc" },
+    }),
+  ]);
+
+  const creditByUser = new Map<string, number>();
+  for (const r of creditRows) creditByUser.set(r.userId, r._sum.points ?? 0);
+  const manualByUser = new Map<string, number>();
+  for (const r of manualRows) manualByUser.set(r.userId, r._sum.points ?? 0);
+  const itemsByUser = new Map<string, PaceInput[]>();
+  for (const a of assignments) {
+    const status = a.project.status as ProjectStatus;
+    const item: PaceInput = {
+      projectId: a.project.id,
+      title: a.project.title,
+      status,
+      everDelivered: resolveEverDelivered({
+        firstDeliveredAt: a.project.firstDeliveredAt,
+        firstCompletedAt: a.project.firstCompletedAt,
+        status,
+      }),
+      allocatedHours: a.allocatedHours,
+      assignedAt: a.assignedAt,
+    };
+    const arr = itemsByUser.get(a.userId);
+    if (arr) arr.push(item);
+    else itemsByUser.set(a.userId, [item]);
+  }
+
+  for (const u of eligibleUsers) {
+    const totalEstimated = estMap.get(u.id)?.totalEstimatedPoints ?? 0;
+    const achieved = (creditByUser.get(u.id) ?? 0) + (manualByUser.get(u.id) ?? 0);
+    const target = proratedMonthlyTarget({
+      targetMonthlyPoints: u.targetMonthlyPoints,
+      joinedAt: u.joinedAt,
+      monthKey: mk,
+      workingDays: wdMap.get(mk) ?? DEFAULT_WORKING_DAYS,
+      now,
+    });
+    const projectedAccuracy =
+      target > 0
+        ? Math.round(((achieved + totalEstimated) / target) * 100)
+        : null;
+    const { lines, totalWorkHours, underload } = planPaceLines(
+      itemsByUser.get(u.id) ?? [],
+      projectedAccuracy,
+      now
+    );
+    out.set(u.id, {
+      eligible: true,
+      projectedAccuracy,
+      lines,
+      totalWorkHours,
+      underload,
+    });
+  }
+
+  return out;
 }
