@@ -6,6 +6,8 @@ import Link from "next/link";
 import { requireRole } from "@/lib/guards";
 import { getPrisma } from "@/lib/prisma";
 import { getClientPaymentsLedger, monthKeyFromDate, type PaymentStatus } from "@/lib/client-payments/queries";
+import { addClientPaymentReceipt, updateReceiptFundStatus, deleteClientPaymentReceipt } from "./actions";
+import { ProjectPaymentPopup } from "./_components/project-payment-popup";
 
 const prisma = getPrisma();
 const BASE_HREF = "/app/admin/client-payments";
@@ -40,13 +42,11 @@ function statusClass(s: PaymentStatus) {
   return "bg-red-100 text-red-800 border-red-200";
 }
 
-function qp(params: Record<string, string | undefined>) {
-  const p = new URLSearchParams();
-  for (const [k, v] of Object.entries(params)) {
-    if (v) p.set(k, v);
-  }
-  const s = p.toString();
-  return s ? `${BASE_HREF}?${s}` : BASE_HREF;
+function portalLabel(p: string) {
+  if (p === "UPWORK") return "Upwork";
+  if (p === "FIVERR") return "Fiverr";
+  if (p === "DIRECT") return "Direct";
+  return "Other";
 }
 
 export default async function ClientPaymentsPage({
@@ -61,7 +61,7 @@ export default async function ClientPaymentsPage({
   const bdId = searchParams?.bdId ?? "";
   const status = (searchParams?.status as PaymentStatus | "ALL" | undefined) ?? "ALL";
 
-  const [rows, departments, bds] = await Promise.all([
+  const [rows, departments, bds, accounts] = await Promise.all([
     getClientPaymentsLedger({
       monthKey,
       departmentId: departmentId || undefined,
@@ -74,28 +74,41 @@ export default async function ClientPaymentsPage({
       orderBy: { fullName: "asc" },
       select: { id: true, fullName: true },
     }),
+    prisma.paymentAccount.findMany({
+      where: { isActive: true },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    }),
   ]);
 
   const totals = rows.reduce(
     (acc, r) => {
       acc.price += r.priceUsd;
+      acc.netExpected += r.netExpectedUsd;
       acc.received += r.totalReceived;
       return acc;
     },
-    { price: 0, received: 0 }
+    { price: 0, netExpected: 0, received: 0 }
   );
 
-  const currentParams = { monthKey, departmentId, bdId, status: status === "ALL" ? undefined : status };
+  // Preserves the current filters so popup submits redirect back to this exact view.
+  const currentQuery = new URLSearchParams();
+  if (monthKey) currentQuery.set("monthKey", monthKey);
+  if (departmentId) currentQuery.set("departmentId", departmentId);
+  if (bdId) currentQuery.set("bdId", bdId);
+  if (status && status !== "ALL") currentQuery.set("status", status);
+  const returnTo = currentQuery.toString() ? `${BASE_HREF}?${currentQuery.toString()}` : BASE_HREF;
+
   const ok = searchParams?.ok;
   const err = searchParams?.err;
 
   return (
-    <div className="max-w-6xl mx-auto p-6 space-y-6">
+    <div className="max-w-7xl mx-auto p-6 space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-xl font-semibold">Client Payments</h1>
           <p className="text-sm text-muted-foreground">
-            Track whether clients have paid for completed projects. Super Admin only.
+            Fact-check whether clients have paid for completed projects. Super Admin only.
           </p>
         </div>
         <div className="flex gap-2">
@@ -169,7 +182,7 @@ export default async function ClientPaymentsPage({
         </button>
       </form>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <div className="border rounded-lg p-4">
           <div className="text-xs text-muted-foreground">Projects</div>
           <div className="text-lg font-semibold">{rows.length}</div>
@@ -179,6 +192,10 @@ export default async function ClientPaymentsPage({
           <div className="text-lg font-semibold">{fmtUsd(totals.price)}</div>
         </div>
         <div className="border rounded-lg p-4">
+          <div className="text-xs text-muted-foreground">Net Expected (after fees)</div>
+          <div className="text-lg font-semibold">{fmtUsd(totals.netExpected)}</div>
+        </div>
+        <div className="border rounded-lg p-4">
           <div className="text-xs text-muted-foreground">Total Received</div>
           <div className="text-lg font-semibold">{fmtUsd(totals.received)}</div>
         </div>
@@ -186,9 +203,11 @@ export default async function ClientPaymentsPage({
 
       <div className="border rounded-lg overflow-hidden">
         <div className="grid grid-cols-12 px-4 py-2 text-xs bg-muted/40 font-medium">
-          <div className="col-span-4">Project</div>
-          <div className="col-span-2">Completed</div>
+          <div className="col-span-3">Project</div>
+          <div className="col-span-1">Portal</div>
           <div className="col-span-1 text-right">Price</div>
+          <div className="col-span-1 text-right">Fee</div>
+          <div className="col-span-1 text-right">Net Exp.</div>
           <div className="col-span-1 text-right">Received</div>
           <div className="col-span-2">Status</div>
           <div className="col-span-2 text-right">Action</div>
@@ -202,14 +221,16 @@ export default async function ClientPaymentsPage({
           <div className="divide-y">
             {rows.map((r) => (
               <div key={r.id} className="grid grid-cols-12 px-4 py-3 text-sm items-center">
-                <div className="col-span-4">
+                <div className="col-span-3">
                   <div className="font-medium">{r.title}</div>
                   <div className="text-xs text-muted-foreground">
-                    {r.department?.name ?? "-"} · {r.bdOwner?.fullName ?? "No BD"}
+                    {r.department?.name ?? "-"} · {r.bdOwner?.fullName ?? "No BD"} · {fmtDate(r.firstCompletedAt)}
                   </div>
                 </div>
-                <div className="col-span-2 text-sm">{fmtDate(r.firstCompletedAt)}</div>
+                <div className="col-span-1 text-xs">{portalLabel(r.portal)}</div>
                 <div className="col-span-1 text-right">{fmtUsd(r.priceUsd)}</div>
+                <div className="col-span-1 text-right text-muted-foreground">{fmtUsd(r.feeUsd)}</div>
+                <div className="col-span-1 text-right">{fmtUsd(r.netExpectedUsd)}</div>
                 <div className="col-span-1 text-right">{fmtUsd(r.totalReceived)}</div>
                 <div className="col-span-2">
                   <span className={`inline-block px-2 py-0.5 rounded-full border text-xs ${statusClass(r.paymentStatus)}`}>
@@ -217,9 +238,14 @@ export default async function ClientPaymentsPage({
                   </span>
                 </div>
                 <div className="col-span-2 text-right">
-                  <Link href={`${BASE_HREF}/${r.id}`} className="text-sm underline">
-                    Manage
-                  </Link>
+                  <ProjectPaymentPopup
+                    row={r}
+                    accounts={accounts}
+                    returnTo={returnTo}
+                    addAction={addClientPaymentReceipt}
+                    updateStatusAction={updateReceiptFundStatus}
+                    deleteAction={deleteClientPaymentReceipt}
+                  />
                 </div>
               </div>
             ))}

@@ -94,10 +94,18 @@ export default async function ClientPaymentDetailPage({
         <AddReceiptDialog projectId={project.id} accounts={accounts} action={addClientPaymentReceipt} />
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <div className="border rounded-lg p-4">
-          <div className="text-xs text-muted-foreground">Project Price</div>
+          <div className="text-xs text-muted-foreground">Price</div>
           <div className="text-lg font-semibold">{fmtUsd(project.priceUsd)}</div>
+        </div>
+        <div className="border rounded-lg p-4">
+          <div className="text-xs text-muted-foreground">Portal Fee</div>
+          <div className="text-lg font-semibold">{fmtUsd(project.feeUsd)}</div>
+        </div>
+        <div className="border rounded-lg p-4">
+          <div className="text-xs text-muted-foreground">Net Expected</div>
+          <div className="text-lg font-semibold">{fmtUsd(project.netExpectedUsd)}</div>
         </div>
         <div className="border rounded-lg p-4">
           <div className="text-xs text-muted-foreground">Total Received</div>

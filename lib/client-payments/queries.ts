@@ -22,10 +22,34 @@ function monthRange(monthKey: string) {
   return { start, end };
 }
 
-export function deriveStatus(totalReceived: number, priceUsd: number): PaymentStatus {
+export function deriveStatus(totalReceived: number, targetUsd: number): PaymentStatus {
   if (totalReceived <= 0) return "NOT_RECEIVED";
-  if (priceUsd > 0 && totalReceived >= priceUsd) return "FULLY_RECEIVED";
+  if (targetUsd > 0 && totalReceived >= targetUsd) return "FULLY_RECEIVED";
   return "PARTIALLY_RECEIVED";
+}
+
+/**
+ * Portals (Fiverr/Upwork) deduct their cut before money ever reaches one of
+ * our accounts. Comparing receipts against the raw project price makes a
+ * fully-settled project look permanently "partial". This computes what
+ * should actually land in hand, using the fee snapshot already stored on
+ * ProjectFinance (mirrors the same formula bd-commission uses).
+ */
+export function computeFeeUsd(priceUsd: number, platformFeeUsd: number | null, platformFeePercent: number | null): number {
+  if (platformFeeUsd != null && platformFeeUsd > 0) return round2(platformFeeUsd);
+  const pct = clampPct(platformFeePercent ?? 0);
+  if (pct <= 0) return 0;
+  return round2((priceUsd * pct) / 100);
+}
+
+function clampPct(v: number) {
+  if (v < 0) return 0;
+  if (v > 100) return 100;
+  return v;
+}
+
+function round2(n: number) {
+  return Math.round(n * 100) / 100;
 }
 
 export type LedgerRow = {
@@ -35,8 +59,10 @@ export type LedgerRow = {
   department: { id: string; name: string } | null;
   bdOwner: { id: string; fullName: string } | null;
   priceUsd: number;
+  feeUsd: number;
+  netExpectedUsd: number;
+  portal: string;
   clientName: string | null;
-  portal: string | null;
   totalReceived: number;
   paymentStatus: PaymentStatus;
   receipts: {
@@ -79,7 +105,15 @@ export async function getClientPaymentsLedger(params: {
       firstCompletedAt: true,
       department: { select: { id: true, name: true } },
       bdOwner: { select: { id: true, fullName: true } },
-      finance: { select: { priceUsd: true, clientName: true, portal: true } },
+      finance: {
+        select: {
+          priceUsd: true,
+          clientName: true,
+          portal: true,
+          platformFeeUsd: true,
+          platformFeePercent: true,
+        },
+      },
       clientPaymentReceipts: {
         select: {
           id: true,
@@ -95,6 +129,13 @@ export async function getClientPaymentsLedger(params: {
 
   const rows: LedgerRow[] = projects.map((p) => {
     const priceUsd = Number(p.finance?.priceUsd ?? 0);
+    const feeUsd = computeFeeUsd(
+      priceUsd,
+      p.finance?.platformFeeUsd != null ? Number(p.finance.platformFeeUsd) : null,
+      p.finance?.platformFeePercent != null ? Number(p.finance.platformFeePercent) : null
+    );
+    const netExpectedUsd = Math.max(0, round2(priceUsd - feeUsd));
+
     const receipts = p.clientPaymentReceipts.map((r) => ({
       id: r.id,
       amountUsd: Number(r.amountUsd),
@@ -111,10 +152,12 @@ export async function getClientPaymentsLedger(params: {
       department: p.department,
       bdOwner: p.bdOwner,
       priceUsd,
+      feeUsd,
+      netExpectedUsd,
+      portal: p.finance?.portal ?? "OTHER",
       clientName: p.finance?.clientName ?? null,
-      portal: p.finance?.portal ?? null,
       totalReceived,
-      paymentStatus: deriveStatus(totalReceived, priceUsd),
+      paymentStatus: deriveStatus(totalReceived, netExpectedUsd),
       receipts,
     };
   });
@@ -135,7 +178,15 @@ export async function getProjectForPaymentDetail(projectId: string) {
       firstCompletedAt: true,
       department: { select: { id: true, name: true } },
       bdOwner: { select: { id: true, fullName: true } },
-      finance: { select: { priceUsd: true, clientName: true, portal: true } },
+      finance: {
+        select: {
+          priceUsd: true,
+          clientName: true,
+          portal: true,
+          platformFeeUsd: true,
+          platformFeePercent: true,
+        },
+      },
       clientPaymentReceipts: {
         orderBy: { receivedAt: "desc" },
         select: {
@@ -156,6 +207,12 @@ export async function getProjectForPaymentDetail(projectId: string) {
   if (!project) return null;
 
   const priceUsd = Number(project.finance?.priceUsd ?? 0);
+  const feeUsd = computeFeeUsd(
+    priceUsd,
+    project.finance?.platformFeeUsd != null ? Number(project.finance.platformFeeUsd) : null,
+    project.finance?.platformFeePercent != null ? Number(project.finance.platformFeePercent) : null
+  );
+  const netExpectedUsd = Math.max(0, round2(priceUsd - feeUsd));
   const totalReceived = project.clientPaymentReceipts.reduce(
     (s, r) => s + Number(r.amountUsd),
     0
@@ -164,8 +221,11 @@ export async function getProjectForPaymentDetail(projectId: string) {
   return {
     ...project,
     priceUsd,
+    feeUsd,
+    netExpectedUsd,
+    portal: project.finance?.portal ?? "OTHER",
     totalReceived,
-    paymentStatus: deriveStatus(totalReceived, priceUsd),
+    paymentStatus: deriveStatus(totalReceived, netExpectedUsd),
   };
 }
 

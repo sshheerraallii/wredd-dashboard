@@ -14,8 +14,9 @@ export function FundStatusForm(props: {
   receiptId: string;
   currentStatus: string;
   action: (formData: FormData) => void;
+  returnTo?: string;
 }) {
-  const { projectId, receiptId, currentStatus, action } = props;
+  const { projectId, receiptId, currentStatus, action, returnTo } = props;
   const [status, setStatus] = React.useState(currentStatus);
   const [editingNote, setEditingNote] = React.useState(false);
 
@@ -23,6 +24,7 @@ export function FundStatusForm(props: {
     <form action={action} className="flex flex-wrap items-center gap-2">
       <input type="hidden" name="projectId" value={projectId} />
       <input type="hidden" name="receiptId" value={receiptId} />
+      {returnTo ? <input type="hidden" name="returnTo" value={returnTo} /> : null}
 
       <select
         name="fundStatus"

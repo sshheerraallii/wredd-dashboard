@@ -11,8 +11,25 @@ const prisma = getPrisma();
 
 const BASE_HREF = "/app/admin/client-payments";
 
+function withParam(path: string, key: string, value: string) {
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}${key}=${encodeURIComponent(value)}`;
+}
+
 function backWithError(path: string, msg: string) {
-  redirect(`${path}?err=${encodeURIComponent(msg)}`);
+  redirect(withParam(path, "err", msg));
+}
+
+/**
+ * Popups on the main ledger pass along a `returnTo` hidden field (the list
+ * page URL with its current filters) so the redirect after an add/update
+ * lands back on the same filtered view instead of a separate project page.
+ * Falls back to the /[id] deep-link page for any caller that doesn't send one.
+ */
+function resolveReturnPath(formData: FormData, projectId: string) {
+  const returnTo = formData.get("returnTo");
+  if (typeof returnTo === "string" && returnTo.startsWith(BASE_HREF)) return returnTo;
+  return `${BASE_HREF}/${projectId}`;
 }
 
 const AddReceiptSchema = z.object({
@@ -35,7 +52,7 @@ export async function addClientPaymentReceipt(formData: FormData) {
   });
 
   const projectId = String(formData.get("projectId") ?? "");
-  const returnPath = `${BASE_HREF}/${projectId}`;
+  const returnPath = resolveReturnPath(formData, projectId);
 
   if (!parsed.success) {
     backWithError(returnPath, parsed.error.issues[0]?.message ?? "Invalid input");
@@ -50,6 +67,7 @@ export async function addClientPaymentReceipt(formData: FormData) {
   });
   if (!account || !account.isActive) {
     backWithError(returnPath, "Selected account is not available");
+    return;
   }
 
   await prisma.clientPaymentReceipt.create({
@@ -65,8 +83,8 @@ export async function addClientPaymentReceipt(formData: FormData) {
   });
 
   revalidatePath(BASE_HREF);
-  revalidatePath(returnPath);
-  redirect(`${returnPath}?ok=1`);
+  revalidatePath(`${BASE_HREF}/${projectId}`);
+  redirect(withParam(returnPath, "ok", "1"));
 }
 
 const UpdateStatusSchema = z.object({
@@ -85,7 +103,7 @@ export async function updateReceiptFundStatus(formData: FormData) {
   });
 
   const projectId = String(formData.get("projectId") ?? "");
-  const returnPath = `${BASE_HREF}/${projectId}`;
+  const returnPath = resolveReturnPath(formData, projectId);
 
   if (!parsed.success) {
     backWithError(returnPath, parsed.error.issues[0]?.message ?? "Invalid input");
@@ -104,8 +122,8 @@ export async function updateReceiptFundStatus(formData: FormData) {
   });
 
   revalidatePath(BASE_HREF);
-  revalidatePath(returnPath);
-  redirect(`${returnPath}?ok=1`);
+  revalidatePath(`${BASE_HREF}/${projectId}`);
+  redirect(withParam(returnPath, "ok", "1"));
 }
 
 export async function deleteClientPaymentReceipt(formData: FormData) {
@@ -113,13 +131,16 @@ export async function deleteClientPaymentReceipt(formData: FormData) {
 
   const receiptId = String(formData.get("receiptId") ?? "");
   const projectId = String(formData.get("projectId") ?? "");
-  const returnPath = `${BASE_HREF}/${projectId}`;
+  const returnPath = resolveReturnPath(formData, projectId);
 
-  if (!receiptId) backWithError(returnPath, "Missing receipt");
+  if (!receiptId) {
+    backWithError(returnPath, "Missing receipt");
+    return;
+  }
 
   await prisma.clientPaymentReceipt.delete({ where: { id: receiptId } });
 
   revalidatePath(BASE_HREF);
-  revalidatePath(returnPath);
-  redirect(`${returnPath}?ok=1`);
+  revalidatePath(`${BASE_HREF}/${projectId}`);
+  redirect(withParam(returnPath, "ok", "1"));
 }
