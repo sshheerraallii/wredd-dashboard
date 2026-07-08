@@ -10,6 +10,7 @@ import {
   reopenOpsTaskInstance,
   extendOpsTaskDeadline,
   toggleOpsTaskActive,
+  deleteOpsTaskInstance,
 } from "@/lib/ops-tasks/actions";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -40,6 +41,17 @@ type Instance = {
   reopenedBy: { id: string; fullName: string } | null;
 };
 
+type RecurringDef = {
+  id: string;
+  title: string;
+  isActive: boolean;
+  runOnDays: number[];
+  timerHours: number;
+  assignee: { id: string; fullName: string; role: string };
+  instanceCount: number;
+  createdAt: string;
+};
+
 type PerfRow = {
   user: { id: string; fullName: string; role: string };
   totalPossible: number;
@@ -56,6 +68,7 @@ type Props = {
   actorId: string;
   opsUsers: OpsUser[];
   instances: Instance[];
+  recurringTasks: RecurringDef[];
   pendingCount: number;
   completedCount: number;
   performance: PerfRow[];
@@ -459,11 +472,13 @@ function TaskCard({
   isSuperAdmin,
   onExtend,
   onReopen,
+  onDelete,
 }: {
   instance: Instance;
   isSuperAdmin: boolean;
   onExtend: (i: Instance) => void;
   onReopen: (id: string) => void;
+  onDelete: (i: Instance) => void;
 }) {
   const isRecurring = instance.task.type === "RECURRING";
   const isDone = instance.status === "COMPLETED";
@@ -559,6 +574,58 @@ function TaskCard({
               Reopen
             </button>
           )}
+          {isSuperAdmin && (
+            <button
+              onClick={() => onDelete(instance)}
+              title="Delete this task — removed entirely, with no effect on performance"
+              className="rounded-lg border border-destructive/40 px-3 py-1.5 text-xs text-destructive transition hover:bg-red-500/10"
+            >
+              Delete
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Confirm Modal ────────────────────────────────────────────────────────────
+
+function ConfirmModal({
+  title,
+  message,
+  confirmLabel,
+  busy,
+  onConfirm,
+  onClose,
+}: {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  busy: boolean;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-sm rounded-2xl border bg-card p-6 shadow-xl">
+        <h2 className="text-base font-semibold">{title}</h2>
+        <p className="mt-2 text-sm text-muted-foreground">{message}</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            disabled={busy}
+            className="rounded-lg border px-4 py-2 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={busy}
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition hover:bg-primary/90 disabled:opacity-50"
+          >
+            {busy ? "Working…" : confirmLabel}
+          </button>
         </div>
       </div>
     </div>
@@ -572,6 +639,7 @@ export function AdminOpsTasksClient({
   actorId,
   opsUsers,
   instances,
+  recurringTasks,
   pendingCount,
   completedCount,
   performance,
@@ -595,6 +663,8 @@ export function AdminOpsTasksClient({
 
   const [showCreate, setShowCreate] = useState(false);
   const [extendTarget, setExtendTarget] = useState<Instance | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Instance | null>(null);
+  const [stopTarget, setStopTarget] = useState<RecurringDef | null>(null);
 
   function navigate(params: Record<string, string>) {
     const sp = new URLSearchParams();
@@ -620,6 +690,33 @@ export function AdminOpsTasksClient({
     });
   }
 
+  function handleDeleteInstance() {
+    if (!deleteTarget) return;
+    const id = deleteTarget.id;
+    startTransition(async () => {
+      await deleteOpsTaskInstance({ instanceId: id });
+      setDeleteTarget(null);
+      router.refresh();
+    });
+  }
+
+  function handleStopRecurring() {
+    if (!stopTarget) return;
+    const id = stopTarget.id;
+    startTransition(async () => {
+      await toggleOpsTaskActive({ taskId: id, isActive: false });
+      setStopTarget(null);
+      router.refresh();
+    });
+  }
+
+  function handleReactivateRecurring(taskId: string) {
+    startTransition(async () => {
+      await toggleOpsTaskActive({ taskId, isActive: true });
+      router.refresh();
+    });
+  }
+
   return (
     <div className="min-h-screen pb-16">
       {showCreate && (
@@ -632,6 +729,30 @@ export function AdminOpsTasksClient({
         <ExtendModal
           instance={extendTarget}
           onClose={() => setExtendTarget(null)}
+        />
+      )}
+      {deleteTarget && (
+        <ConfirmModal
+          title="Delete this task?"
+          message={
+            deleteTarget.task.type === "RECURRING"
+              ? "This removes this one occurrence only. The recurring task keeps running unless you Stop it. It won't count toward performance."
+              : "This permanently removes the task. It won't count toward performance — as if it was never assigned."
+          }
+          confirmLabel="Delete"
+          busy={isPending}
+          onConfirm={handleDeleteInstance}
+          onClose={() => setDeleteTarget(null)}
+        />
+      )}
+      {stopTarget && (
+        <ConfirmModal
+          title="Stop this recurring task?"
+          message="No new daily tasks will be generated from now on. All past tasks and their points are kept unchanged. You can reactivate it later."
+          confirmLabel="Stop"
+          busy={isPending}
+          onConfirm={handleStopRecurring}
+          onClose={() => setStopTarget(null)}
         />
       )}
 
@@ -656,6 +777,7 @@ export function AdminOpsTasksClient({
         <div className="flex w-fit gap-1 rounded-xl border bg-card p-1">
           {[
             { key: "tasks", label: "All Tasks" },
+            { key: "recurring", label: `Recurring (${recurringTasks.length})` },
             { key: "performance", label: "Performance" },
           ].map(({ key, label }) => (
             <button
@@ -738,9 +860,98 @@ export function AdminOpsTasksClient({
                     isSuperAdmin={isSuperAdmin}
                     onExtend={setExtendTarget}
                     onReopen={handleReopen}
+                    onDelete={setDeleteTarget}
                   />
                 ))}
               </div>
+            )}
+          </div>
+        )}
+
+        {/* ── RECURRING TAB ── */}
+        {tab === "recurring" && (
+          <div className="flex flex-col gap-3">
+            {recurringTasks.length === 0 ? (
+              <div className="py-16 text-center text-muted-foreground">
+                <div className="mb-3 text-3xl">↻</div>
+                <p className="text-sm">No recurring tasks</p>
+              </div>
+            ) : (
+              recurringTasks.map((t) => {
+                const color = colorFor(t.assignee.id);
+                const scheduled = [...t.runOnDays]
+                  .sort((a, b) => a - b)
+                  .map((d) => DAYS[d]);
+                return (
+                  <div
+                    key={t.id}
+                    className={`rounded-xl border bg-card p-4 transition ${
+                      t.isActive ? "" : "opacity-60"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="mb-2 flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-medium">{t.title}</span>
+                          {t.isActive ? (
+                            <Badge color="green">Active</Badge>
+                          ) : (
+                            <Badge color="red">Stopped</Badge>
+                          )}
+                          <Badge color="purple">↻ Daily</Badge>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="flex items-center gap-1.5">
+                            <div
+                              className="flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-semibold"
+                              style={{ background: color + "25", color }}
+                            >
+                              {initialsOf(t.assignee.fullName)}
+                            </div>
+                            <span className="text-xs text-muted-foreground">
+                              {t.assignee.fullName}
+                            </span>
+                          </div>
+                          <span className="text-xs text-muted-foreground">
+                            {scheduled.length === 7
+                              ? "Every day"
+                              : scheduled.join(", ")}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            · {t.timerHours}h timer
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            · {t.instanceCount} task
+                            {t.instanceCount === 1 ? "" : "s"} generated
+                          </span>
+                        </div>
+                      </div>
+
+                      {isSuperAdmin && (
+                        <div className="flex shrink-0 gap-2">
+                          {t.isActive ? (
+                            <button
+                              onClick={() => setStopTarget(t)}
+                              title="Stop future generation — past tasks and points are kept"
+                              className="rounded-lg border border-destructive/40 px-3 py-1.5 text-xs text-destructive transition hover:bg-red-500/10"
+                            >
+                              Stop
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleReactivateRecurring(t.id)}
+                              disabled={isPending}
+                              className="rounded-lg border px-3 py-1.5 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:opacity-50"
+                            >
+                              Reactivate
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
             )}
           </div>
         )}

@@ -92,6 +92,10 @@ const ToggleTaskActiveSchema = z.object({
   isActive: z.boolean(),
 });
 
+const DeleteInstanceSchema = z.object({
+  instanceId: z.string().min(1),
+});
+
 // ─── Create Task ──────────────────────────────────────────────────────────────
 
 export async function createOpsTask(input: z.infer<typeof CreateTaskSchema>) {
@@ -317,19 +321,63 @@ export async function extendOpsTaskDeadline(
 export async function toggleOpsTaskActive(
   input: z.infer<typeof ToggleTaskActiveSchema>
 ) {
-  await requireRole(["SUPER_ADMIN", "MANAGER"]);
+  await requireRole(["SUPER_ADMIN"]);
   const { actorRole } = await getActor();
-  requireAdminOrManager(actorRole);
+  requireSuperAdmin(actorRole);
 
   const parsed = ToggleTaskActiveSchema.safeParse(input);
   if (!parsed.success) redirect("/app/admin/ops-tasks?err=invalid_input");
 
+  // Stopping a recurring task only halts future generation; all past
+  // instances (pending + completed) are intentionally left untouched so
+  // historical performance is never altered retroactively.
   await prisma.opsTask.update({
     where: { id: parsed.data.taskId },
     data: { isActive: parsed.data.isActive },
   });
 
   revalidatePath("/app/admin/ops-tasks");
+}
+
+// ─── Delete Instance (hard delete, no performance impact) ─────────────────────
+
+/**
+ * Hard-delete a single task instance. Because performance is computed purely
+ * from the surviving instance rows, removing the row eliminates it from both
+ * the earned and possible totals — i.e. it counts as if it was never assigned.
+ *
+ *   ONE_OFF   → the parent definition is a 1:1 shell, so we delete the parent
+ *               (its single instance cascades away) to avoid orphan rows.
+ *   RECURRING → only this occurrence is removed; the definition keeps running
+ *               unless it is separately Stopped.
+ *
+ * Super Admin only.
+ */
+export async function deleteOpsTaskInstance(
+  input: z.infer<typeof DeleteInstanceSchema>
+) {
+  await requireRole(["SUPER_ADMIN"]);
+  const { actorRole } = await getActor();
+  requireSuperAdmin(actorRole);
+
+  const parsed = DeleteInstanceSchema.safeParse(input);
+  if (!parsed.success) redirect("/app/admin/ops-tasks?err=invalid_input");
+
+  const instance = await prisma.opsTaskInstance.findUnique({
+    where: { id: parsed.data.instanceId },
+    select: { id: true, taskId: true, task: { select: { type: true } } },
+  });
+  if (!instance) redirect("/app/admin/ops-tasks?err=not_found");
+
+  if (instance.task.type === "ONE_OFF") {
+    // Deleting the parent cascades the sole instance away.
+    await prisma.opsTask.delete({ where: { id: instance.taskId } });
+  } else {
+    await prisma.opsTaskInstance.delete({ where: { id: instance.id } });
+  }
+
+  revalidatePath("/app/admin/ops-tasks");
+  revalidatePath("/app/ops-tasks");
 }
 
 // ─── Queries ──────────────────────────────────────────────────────────────────

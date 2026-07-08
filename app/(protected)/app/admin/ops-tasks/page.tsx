@@ -96,6 +96,16 @@ export default async function AdminOpsTasksPage({
     orderBy: { createdAt: "desc" },
   });
 
+  // ── Fetch recurring task definitions (management view) ───────────────────
+  const recurringDefs = await prisma.opsTask.findMany({
+    where: { type: "RECURRING" },
+    include: {
+      assignee: { select: { id: true, fullName: true, role: true } },
+      _count: { select: { instances: true } },
+    },
+    orderBy: [{ isActive: "desc" }, { createdAt: "desc" }],
+  });
+
   // ── Fetch performance data ────────────────────────────────────────────────
   const perfInstances = await prisma.opsTaskInstance.findMany({
     where: {
@@ -194,6 +204,16 @@ export default async function AdminOpsTasksPage({
         completedAt: i.completedAt?.toISOString() ?? null,
         deadlineExtendedAt: i.deadlineExtendedAt?.toISOString() ?? null,
         reopenedAt: i.reopenedAt?.toISOString() ?? null,
+      }))}
+      recurringTasks={recurringDefs.map((t) => ({
+        id: t.id,
+        title: t.title,
+        isActive: t.isActive,
+        runOnDays: t.runOnDays,
+        timerHours: t.timerHours,
+        assignee: t.assignee,
+        instanceCount: t._count.instances,
+        createdAt: t.createdAt.toISOString(),
       }))}
       pendingCount={pendingCount}
       completedCount={completedCount}
