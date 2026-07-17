@@ -7,6 +7,6 @@ export async function GET(req: Request) {
   if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
   }
-  const res = await sendPendingEmailDeliveries(25);
+  const res = await sendPendingEmailDeliveries(100);
   return NextResponse.json({ ok: true, ...res });
 }

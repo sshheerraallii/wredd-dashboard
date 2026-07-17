@@ -55,6 +55,12 @@ export function LiveNotifications() {
   React.useEffect(() => {
     let timer: any = null;
     let stopped = false;
+    let lastActivity = Date.now();
+    const IDLE_LIMIT_MS = 5 * 60 * 1000; // stop polling after 5 min of no interaction
+    const activityEvents = ["mousemove", "mousedown", "keydown", "scroll", "touchstart"] as const;
+    const markActive = () => {
+      lastActivity = Date.now();
+    };
 
     const getLastSeen = () => {
       const v = localStorage.getItem(key);
@@ -70,6 +76,9 @@ export function LiveNotifications() {
 
       // only poll when tab visible
       if (document.visibilityState !== "visible") return;
+
+      // stop polling after a stretch of no interaction (foreground-but-idle tab)
+      if (Date.now() - lastActivity > IDLE_LIMIT_MS) return;
 
       const since = getLastSeen();
       const url = since ? `/api/notifications/poll?since=${encodeURIComponent(since)}` : `/api/notifications/poll`;
@@ -117,11 +126,18 @@ export function LiveNotifications() {
 
     // initial tick + interval
     tick();
-    timer = setInterval(tick, 8000);
+    timer = setInterval(tick, 5 * 60 * 1000);
+
+    for (const ev of activityEvents) {
+      window.addEventListener(ev, markActive, { passive: true });
+    }
 
     return () => {
       stopped = true;
       if (timer) clearInterval(timer);
+      for (const ev of activityEvents) {
+        window.removeEventListener(ev, markActive);
+      }
     };
   }, [removeToast]);
 

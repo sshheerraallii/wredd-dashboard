@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/cron/notifications/send",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 * * * *"
     },
     {
       "path": "/api/cron/notifications/cleanup",
@@ -14,7 +14,7 @@
     },
     {
       "path": "/api/cron/ops-tasks/due-soon",
-      "schedule": "0 * * * *"
+      "schedule": "0 8 * * *"
     }
   ]
 }
