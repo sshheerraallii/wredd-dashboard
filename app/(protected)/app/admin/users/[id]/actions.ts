@@ -6,6 +6,11 @@ import { requireAdmin } from "@/lib/rbac";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireRole } from "@/lib/guards";
+import {
+  firstOfMonthUTC,
+  parseEffectiveFrom,
+  recordUserRateChange,
+} from "@/lib/user-rates/history";
 
 const prisma = getPrisma();
 
@@ -36,12 +41,16 @@ export async function updateUserPerformance(userId: string, formData: FormData) 
     targetMonthlyPoints: z.coerce.number().int().min(0).max(100000),
     joinedAt: z.string().min(10),
     onsiteHourRatePkr: z.coerce.number().int().min(0).max(10000000).nullable().optional(),
+    rateEffectiveFrom: z.string().optional().nullable(),
+    rateNote: z.string().max(500).optional().nullable(),
   });
 
   const parsed = Schema.safeParse({
     targetMonthlyPoints: formData.get("targetMonthlyPoints"),
     joinedAt: formData.get("joinedAt"),
     onsiteHourRatePkr: formData.get("onsiteHourRatePkr") || null,
+    rateEffectiveFrom: (formData.get("rateEffectiveFrom") as string | null) ?? null,
+    rateNote: (formData.get("rateNote") as string | null) ?? null,
   });
 
   if (!parsed.success) backWithError(userId, parsed.error.issues[0]?.message ?? "Invalid input");
@@ -49,13 +58,36 @@ export async function updateUserPerformance(userId: string, formData: FormData) 
   const joinedAt = new Date(parsed.data.joinedAt + "T00:00:00.000Z");
   if (Number.isNaN(joinedAt.getTime())) backWithError(userId, "Invalid joinedAt");
 
- await prisma.user.update({
-    where: { id: userId },
-    data: {
-      targetMonthlyPoints: parsed.data.targetMonthlyPoints,
-      joinedAt,
-      onsiteHourRatePkr: parsed.data?.onsiteHourRatePkr ?? null,
-    },
+  // Effective date defaults to the 1st of the current month: salaries, targets
+  // and commissions are all monthly, so a mid-month date would split the month
+  // across two rates. Backdating and forward-dating are allowed.
+  const data = parsed.data!;
+
+  const effectiveFrom =
+    (data.rateEffectiveFrom
+      ? parseEffectiveFrom(data.rateEffectiveFrom)
+      : null) ?? firstOfMonthUTC(new Date());
+
+  await prisma.$transaction(async (tx) => {
+    await tx.user.update({
+      where: { id: userId },
+      data: { joinedAt },
+    });
+
+    // Writes the history row AND re-syncs the current values on User from
+    // whichever row is latest, so a backdated correction cannot clobber a
+    // newer rate.
+    await recordUserRateChange(
+      {
+        userId,
+        effectiveFrom,
+        onsiteHourRatePkr: data.onsiteHourRatePkr ?? null,
+        targetMonthlyPoints: data.targetMonthlyPoints,
+        note: data.rateNote?.trim() || null,
+        createdById: (actor?.id as string) ?? null,
+      },
+      tx
+    );
   });
 
   revalidatePath(`/app/admin/users/${userId}/edit`);

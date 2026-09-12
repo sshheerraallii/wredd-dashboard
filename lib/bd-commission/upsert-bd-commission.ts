@@ -9,6 +9,7 @@ import {
   WorkType,
 } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { resolveManyUserRatesAsOf } from "@/lib/user-rates/history";
 
 const prisma = getPrisma();
 
@@ -169,17 +170,27 @@ export async function upsertBdCommissionForProject(projectId: string) {
         },
         select: {
           allocatedHours: true,
-          user: { select: { onsiteHourRatePkr: true } },
+          userId: true,
         },
       });
 
       const avgHourCost = toDec(config.avgOnsiteHourCostPkr, "0");
 
+      // Rates are resolved AS OF first completion, not as of today. Raising a
+      // salary next month must not rewrite this month's overhead when the
+      // month is recalculated. Falls back to the current User value for any
+      // worker with no history row (i.e. before the backfill has run).
+      const ratesAsOf = await resolveManyUserRatesAsOf(
+        onsiteAssignments.map((a) => a.userId),
+        project.firstCompletedAt,
+        tx
+      );
+
       for (const a of onsiteAssignments) {
         const hours = new Prisma.Decimal(a.allocatedHours ?? 0);
-        const rate = a.user.onsiteHourRatePkr != null
-          ? new Prisma.Decimal(a.user.onsiteHourRatePkr)
-          : avgHourCost;
+        const resolved = ratesAsOf.get(a.userId)?.onsiteHourRatePkr ?? null;
+        const rate =
+          resolved != null ? new Prisma.Decimal(resolved) : avgHourCost;
         overheadPkr = overheadPkr.add(hours.mul(rate));
       }
 

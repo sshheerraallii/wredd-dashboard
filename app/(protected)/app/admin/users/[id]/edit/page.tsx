@@ -10,6 +10,10 @@ import {
   overheadForWorkerType,
   sellableHoursPerMonth,
 } from "@/lib/onsite-points/overhead-settings";
+import {
+  firstOfMonthUTC,
+  listUserRateHistory,
+} from "@/lib/user-rates/history";
 
 const prisma = getPrisma();
 
@@ -61,6 +65,9 @@ export default async function UserEditPage({
   const overheadSettings = await getOnsiteOverheadSettings();
   const sellableHours = sellableHoursPerMonth(overheadSettings);
   const workerOverhead = overheadForWorkerType(user.workerType, overheadSettings);
+
+  const rateHistory = await listUserRateHistory(userId);
+  const effectiveDefault = firstOfMonthUTC(new Date()).toISOString().slice(0, 10);
 
   const existing = await prisma.userDepartment.findMany({
     where: { userId },
@@ -194,6 +201,82 @@ export default async function UserEditPage({
               effectiveHours={overheadSettings.effectiveHoursPerDay}
             />
           ) : null}
+
+          <div className="rounded-xl border bg-muted/40 p-3 space-y-3">
+            <div>
+              <div className="text-xs font-medium">Effective from</div>
+              <p className="text-[11px] leading-relaxed text-muted-foreground">
+                Saving records the rate and target as a dated change. Closed
+                months keep the values they were calculated with — recalculating
+                July will not pick up a rate you set in September. Defaults to
+                the 1st of the current month; backdate only to correct history.
+              </p>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Effective from</label>
+                <input
+                  name="rateEffectiveFrom"
+                  type="date"
+                  defaultValue={effectiveDefault}
+                  className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Reason (optional)</label>
+                <input
+                  name="rateNote"
+                  type="text"
+                  maxLength={500}
+                  placeholder="e.g. salary revised to 70,000"
+                  className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                />
+              </div>
+            </div>
+
+            {rateHistory.length > 0 ? (
+              <div className="space-y-1">
+                <div className="text-xs font-medium">History</div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[11px]">
+                    <thead className="text-muted-foreground">
+                      <tr className="text-left">
+                        <th className="py-1 pr-3 font-medium">From</th>
+                        <th className="py-1 pr-3 font-medium">Rate</th>
+                        <th className="py-1 pr-3 font-medium">Target</th>
+                        <th className="py-1 font-medium">Reason</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rateHistory.map((h) => (
+                        <tr key={h.id} className="border-t">
+                          <td className="py-1 pr-3 whitespace-nowrap">
+                            {h.effectiveFrom.toISOString().slice(0, 10)}
+                          </td>
+                          <td className="py-1 pr-3">
+                            {h.onsiteHourRatePkr ?? "\u2014"}
+                          </td>
+                          <td className="py-1 pr-3">
+                            {h.targetMonthlyPoints ?? 0}
+                          </td>
+                          <td className="py-1 text-muted-foreground">
+                            {h.note ?? ""}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : (
+              <p className="text-[11px] leading-relaxed text-muted-foreground">
+                No history yet. Run{" "}
+                <code>node scripts/backfill-user-rate-history.js</code> once to
+                seed opening rows from the current values.
+              </p>
+            )}
+          </div>
 
           <div className="text-xs text-muted-foreground">
             Created: {new Date(user.createdAt).toLocaleString()}
