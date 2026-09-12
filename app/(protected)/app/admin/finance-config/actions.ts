@@ -8,6 +8,10 @@ import { getPrisma } from "@/lib/prisma";
 import { BdCommissionTab } from "@prisma/client";
 import { upsertBdCommissionForProject } from "@/lib/bd-commission/upsert-bd-commission";
 import { setOnsiteConstants } from "@/lib/onsite-points/settings";
+import {
+  getOnsiteOverheadSettings,
+  setOnsiteOverheadSettings,
+} from "@/lib/onsite-points/overhead-settings";
 
 const prisma = getPrisma();
 
@@ -330,4 +334,73 @@ export async function updateOnsiteConstants(formData: FormData) {
       "Onsite points constants saved. Applies to new assignments going forward."
     )}`
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Onsite hourly-rate model (global)
+//
+//   onsiteHourRatePkr = (monthlySalary / (workingDays * effectiveHours))
+//                       + departmentOverheadPkrPerHour
+//
+// The department overhead is baked into every worker's stored rate, so the BD
+// department cost base strips it back out to recover the bare salary. Editing
+// these values does NOT rewrite existing worker rates — it changes what new
+// rates should be, and what the implied-salary readout on each user's edit page
+// reports. Re-enter affected worker rates after changing anything here.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const OnsiteOverheadSchema = z.object({
+  animationPkrPerHour: z.coerce
+    .number()
+    .min(0, "Animation overhead must be >= 0")
+    .max(100000, "Animation overhead looks too large"),
+  videoEditingPkrPerHour: z.coerce
+    .number()
+    .min(0, "Video Editing overhead must be >= 0")
+    .max(100000, "Video Editing overhead looks too large"),
+  workingDaysPerMonth: z.coerce
+    .number()
+    .positive("Working days must be greater than 0")
+    .max(31, "Working days must be <= 31"),
+  effectiveHoursPerDay: z.coerce
+    .number()
+    .positive("Effective hours must be greater than 0")
+    .max(24, "Effective hours must be <= 24"),
+});
+
+export async function updateOnsiteOverheads(formData: FormData) {
+  const session = await readSession();
+  requireSuperAdmin(session?.user?.role);
+
+  const parsed = OnsiteOverheadSchema.safeParse({
+    animationPkrPerHour: formData.get("animationPkrPerHour"),
+    videoEditingPkrPerHour: formData.get("videoEditingPkrPerHour"),
+    workingDaysPerMonth: formData.get("workingDaysPerMonth"),
+    effectiveHoursPerDay: formData.get("effectiveHoursPerDay"),
+  });
+
+  if (!parsed.success) {
+    const msg = parsed.error.issues[0]?.message ?? "Invalid values";
+    redirect(`/app/admin/finance-config?err=${encodeURIComponent(msg)}`);
+  }
+
+  const before = await getOnsiteOverheadSettings();
+  const next = parsed.data;
+
+  await setOnsiteOverheadSettings({
+    animationPkrPerHour: Math.round(next.animationPkrPerHour),
+    videoEditingPkrPerHour: Math.round(next.videoEditingPkrPerHour),
+    workingDaysPerMonth: next.workingDaysPerMonth,
+    effectiveHoursPerDay: next.effectiveHoursPerDay,
+  });
+
+  const divisorChanged =
+    before.workingDaysPerMonth !== next.workingDaysPerMonth ||
+    before.effectiveHoursPerDay !== next.effectiveHoursPerDay;
+
+  const msg = divisorChanged
+    ? "Rate model saved. The sellable-hours divisor changed — every existing worker rate now implies a different salary. Re-enter onsite hour rates before the next commission run."
+    : "Rate model saved. Existing worker rates are unchanged — re-enter them if the overhead moved.";
+
+  redirect(`/app/admin/finance-config?ok=1&msg=${encodeURIComponent(msg)}`);
 }

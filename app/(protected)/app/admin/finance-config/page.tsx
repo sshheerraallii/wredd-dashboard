@@ -2,9 +2,19 @@
 import { redirect } from "next/navigation";
 import { readSession } from "@/lib/auth";
 import { getPrisma } from "@/lib/prisma";
-import { createMonth, finalizeMonth, updateMonth, updateOnsiteConstants } from "./actions";
+import {
+  createMonth,
+  finalizeMonth,
+  updateMonth,
+  updateOnsiteConstants,
+  updateOnsiteOverheads,
+} from "./actions";
 import { UnfinalizeButton, RecalculateButton } from "./month-action-buttons";
 import { getOnsiteConstants } from "@/lib/onsite-points/settings";
+import {
+  getOnsiteOverheadSettings,
+  sellableHoursPerMonth,
+} from "@/lib/onsite-points/overhead-settings";
 
 const prisma = getPrisma();
 
@@ -45,6 +55,8 @@ export default async function FinanceConfigPage({
   });
 
   const onsiteConstants = await getOnsiteConstants();
+  const overhead = await getOnsiteOverheadSettings();
+  const sellableHours = sellableHoursPerMonth(overhead);
 
   const selected = searchParams.monthKey ?? all[0]?.monthKey ?? nowMonthKeyUTC();
   const row = all.find((x) => x.monthKey === selected) ?? null;
@@ -319,6 +331,154 @@ export default async function FinanceConfigPage({
             </div>
             <button className="rounded-xl border px-4 py-2 text-sm hover:bg-muted">
               Save constants
+            </button>
+          </div>
+        </form>
+      </div>
+
+      {/* ── Onsite hourly rate model (global) ── */}
+      <div className="rounded-2xl border bg-card p-4 space-y-4">
+        <div>
+          <div className="text-sm font-medium">Onsite Hourly Rate Model (Global)</div>
+          <p className="text-xs text-muted-foreground">
+            Every onsite worker&apos;s hour rate is built from these four
+            numbers. The department overhead is the share of rent, electricity,
+            internet, management, subscriptions and ads carried by one hour of
+            that department&apos;s time.
+          </p>
+        </div>
+
+        <div className="rounded-xl border bg-muted/40 p-3 space-y-1">
+          <div className="text-xs font-medium">The formula</div>
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            <code>
+              onsiteHourRatePkr = (monthly salary &divide; sellable hours) +
+              department overhead
+            </code>
+            <br />
+            <code>
+              sellable hours = {overhead.workingDaysPerMonth} working days
+              &times; {overhead.effectiveHoursPerDay} effective hours ={" "}
+              <strong>{sellableHours}</strong>
+            </code>
+            <br />
+            Reversed, so the BD department cost base can recover the bare
+            salary:{" "}
+            <code>
+              monthly salary = (rate &minus; department overhead) &times;{" "}
+              {sellableHours}
+            </code>
+            <br />
+            <span className="text-foreground">
+              Example: an animator on 70,000 &rarr; (70,000 &divide;{" "}
+              {sellableHours}) + {overhead.animationPkrPerHour} ={" "}
+              <strong>
+                {Math.round(70000 / sellableHours + overhead.animationPkrPerHour)}{" "}
+                PKR/hour
+              </strong>
+              . A video editor on the same salary &rarr;{" "}
+              <strong>
+                {Math.round(
+                  70000 / sellableHours + overhead.videoEditingPkrPerHour
+                )}{" "}
+                PKR/hour
+              </strong>
+              .
+            </span>
+          </p>
+        </div>
+
+        <form action={updateOnsiteOverheads} className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-1">
+              <label className="text-xs font-medium">
+                Animation overhead (PKR / hour)
+              </label>
+              <input
+                name="animationPkrPerHour"
+                type="number"
+                step="1"
+                min="0"
+                defaultValue={overhead.animationPkrPerHour}
+                className="w-full rounded-xl border bg-background px-3 py-2 text-sm"
+                placeholder="e.g. 322"
+              />
+              <p className="text-[11px] leading-relaxed text-muted-foreground">
+                Added to every <strong>ONSITE_ANIMATOR</strong> rate.
+              </p>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-medium">
+                Video Editing overhead (PKR / hour)
+              </label>
+              <input
+                name="videoEditingPkrPerHour"
+                type="number"
+                step="1"
+                min="0"
+                defaultValue={overhead.videoEditingPkrPerHour}
+                className="w-full rounded-xl border bg-background px-3 py-2 text-sm"
+                placeholder="e.g. 219"
+              />
+              <p className="text-[11px] leading-relaxed text-muted-foreground">
+                Added to every other onsite worker&apos;s rate.
+              </p>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-medium">Working days / month</label>
+              <input
+                name="workingDaysPerMonth"
+                type="number"
+                step="1"
+                min="1"
+                max="31"
+                defaultValue={overhead.workingDaysPerMonth}
+                className="w-full rounded-xl border bg-background px-3 py-2 text-sm"
+                placeholder="e.g. 25"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-medium">
+                Effective hours / day
+              </label>
+              <input
+                name="effectiveHoursPerDay"
+                type="number"
+                step="0.1"
+                min="0.1"
+                max="24"
+                defaultValue={overhead.effectiveHoursPerDay}
+                className="w-full rounded-xl border bg-background px-3 py-2 text-sm"
+                placeholder="e.g. 6.5"
+              />
+              <p className="text-[11px] leading-relaxed text-muted-foreground">
+                Keep this equal to the effective hours used by the points model,
+                or costing and performance will disagree about a full month.
+              </p>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-3">
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              <strong className="text-foreground">
+                Saving does not rewrite existing worker rates.
+              </strong>{" "}
+              Rates are stored per worker. If you change the overhead or the
+              divisor, every stored rate now implies a different salary — open
+              each onsite worker&apos;s edit page and re-enter the rate. The
+              implied-salary readout there will tell you which ones are stale.
+            </p>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="text-xs text-muted-foreground">
+              Sellable hours per month: <strong>{sellableHours}</strong>
+            </div>
+            <button className="rounded-xl border px-4 py-2 text-sm hover:bg-muted">
+              Save rate model
             </button>
           </div>
         </form>

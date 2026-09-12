@@ -4,6 +4,12 @@ import { requireAdmin } from "@/lib/rbac";
 import { requireRole } from "@/lib/guards";
 import { updateUserDepartments, updateUserPerformance } from "../actions";
 import { UserDangerZone } from "./_components/user-danger-zone";
+import { OnsiteRateField } from "./_components/onsite-rate-field";
+import {
+  getOnsiteOverheadSettings,
+  overheadForWorkerType,
+  sellableHoursPerMonth,
+} from "@/lib/onsite-points/overhead-settings";
 
 const prisma = getPrisma();
 
@@ -51,6 +57,10 @@ export default async function UserEditPage({
     orderBy: { name: "asc" },
     select: { id: true, name: true },
   });
+
+  const overheadSettings = await getOnsiteOverheadSettings();
+  const sellableHours = sellableHoursPerMonth(overheadSettings);
+  const workerOverhead = overheadForWorkerType(user.workerType, overheadSettings);
 
   const existing = await prisma.userDepartment.findMany({
     where: { userId },
@@ -175,20 +185,14 @@ export default async function UserEditPage({
           </div>
 
        {user.role === "ONSITE_EMPLOYEE" ? (
-            <div className="space-y-1">
-              <label className="text-sm font-medium">Onsite hour rate (PKR)</label>
-              <input
-                name="onsiteHourRatePkr"
-                type="number"
-                min={0}
-                defaultValue={user.onsiteHourRatePkr ?? ""}
-                placeholder="Leave blank to use global avg rate"
-                className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-              />
-              <div className="text-xs text-muted-foreground">
-                Per-hour cost used in BD commission overhead. Falls back to monthly avg if blank.
-              </div>
-            </div>
+            <OnsiteRateField
+              defaultRate={user.onsiteHourRatePkr ?? null}
+              workerType={user.workerType ?? null}
+              overheadPkrPerHour={workerOverhead}
+              sellableHours={sellableHours}
+              workingDays={overheadSettings.workingDaysPerMonth}
+              effectiveHours={overheadSettings.effectiveHoursPerDay}
+            />
           ) : null}
 
           <div className="text-xs text-muted-foreground">
