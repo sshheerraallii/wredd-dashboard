@@ -77,6 +77,7 @@ function buildNavGroups(args: {
           { href: "/app/admin/finance-config", label: "Finance Config" },
           { href: "/app/admin/bd-config", label: "BD Configs" },
           { href: "/app/admin/targets", label: "BD Targets" },
+          { href: "/app/bd/settlement", label: "BD Monthly Settlement" },
           { href: "/app/admin/bd-commission", label: "BD Commission Ledger" },
           { href: "/app/admin/client-payments", label: "Client Payments" },
         ],
@@ -168,8 +169,9 @@ function buildNavGroups(args: {
         title: "My Finance",
         defaultOpen: true,
         items: [
+          { href: "/app/bd/settlement", label: "Monthly Settlement" },
           { href: "/app/bd/targets", label: "My Targets" },
-          { href: "/app/bd/commission", label: "My Commission" },
+          { href: "/app/bd/commission", label: "Project Margins" },
         ],
       }
     );

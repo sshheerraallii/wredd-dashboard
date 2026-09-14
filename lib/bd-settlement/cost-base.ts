@@ -208,3 +208,18 @@ export async function computeDepartmentCostBase(
     orphans,
   };
 }
+
+/**
+ * Blended cost of one hour of studio time, at FULL capacity.
+ *
+ *   (all department salaries + the whole overhead pool) / all sellable hours
+ *
+ * This is what an hour genuinely costs when the floor is full, and it is the
+ * right rate for judging whether a single project earned more than the time it
+ * consumed. It is NOT a commission input — commission is settled monthly.
+ */
+export function blendedHourCostPkr(costBase: CostBaseResult): number {
+  const hours = costBase.totals.sellableHours;
+  if (hours <= 0) return 0;
+  return Math.round(costBase.totals.totalPkr / hours);
+}

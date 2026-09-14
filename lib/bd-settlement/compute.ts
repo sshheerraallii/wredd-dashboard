@@ -1,6 +1,11 @@
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
-import { computeDepartmentCostBase, type CostBaseResult } from "./cost-base";
+import {
+  computeDepartmentCostBase,
+  countWeekdays,
+  monthBounds,
+  type CostBaseResult,
+} from "./cost-base";
 
 /**
  * Monthly BD settlement — ABSORPTION COSTING.
@@ -38,7 +43,10 @@ export type BdSettlement = {
   remotePayoutPkr: number;
   costSalariesPkr: number;
   costOverheadPkr: number;
+  /** Charged this month. Equals costBaseFullPkr once the month is over. */
   costBasePkr: number;
+  /** The whole month's commitment, before mid-month proration. */
+  costBaseFullPkr: number;
   profitPkr: number;
   payoutPkr: number;
   projectCount: number;
@@ -53,6 +61,11 @@ export type SettlementRun = {
   costBase: CostBaseResult;
   settlements: BdSettlement[];
   warnings: string[];
+  /** Working days elapsed / in the month, and the resulting cost-base factor. */
+  elapsedWorkDays: number;
+  workDaysInMonth: number;
+  prorationPct: number;
+  isCurrentMonth: boolean;
 };
 
 function toNum(v: unknown): number {
@@ -72,6 +85,26 @@ export async function computeBdSettlements(
   const warnings: string[] = [];
 
   const costBase = await computeDepartmentCostBase(monthKey, c);
+
+  // Mid-month, revenue is partial but the cost base is a whole month. Comparing
+  // the two makes every BD look deeply unprofitable on the 10th and teaches
+  // people to ignore the page. So for the CURRENT month only, the cost base is
+  // pro-rated by working days elapsed. Closed months always charge in full.
+  const { start, end } = monthBounds(monthKey);
+  const now = new Date();
+  const isCurrentMonth = now >= start && now < end;
+  const workDaysInMonth = countWeekdays(start, end) || 1;
+  const elapsedWorkDays = isCurrentMonth
+    ? countWeekdays(
+        start,
+        new Date(
+          Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)
+        )
+      )
+    : workDaysInMonth;
+  const proration = isCurrentMonth
+    ? Math.min(1, elapsedWorkDays / workDaysInMonth)
+    : 1;
 
   const allocations = await c.bdDepartmentAllocation.findMany({
     where: { monthKey },
@@ -196,7 +229,8 @@ export async function computeBdSettlements(
     const remotePayoutPkr = rows.reduce((a, r) => a + toNum(r.workerPayoutPkr), 0);
     const usedHours = rows.reduce((a, r) => a + (r.allowedHours ?? 0), 0);
 
-    const costBasePkr = Math.round(costSalaries + costOverhead);
+    const costBaseFullPkr = Math.round(costSalaries + costOverhead);
+    const costBasePkr = Math.round(costBaseFullPkr * proration);
     const profitPkr = Math.round(revenuePkr - remotePayoutPkr - costBasePkr);
     const payoutPkr = Math.max(0, Math.round(profitPkr * bd.bdRate));
 
@@ -206,9 +240,10 @@ export async function computeBdSettlements(
       bdRate: bd.bdRate,
       revenuePkr: Math.round(revenuePkr),
       remotePayoutPkr: Math.round(remotePayoutPkr),
-      costSalariesPkr: Math.round(costSalaries),
-      costOverheadPkr: Math.round(costOverhead),
+      costSalariesPkr: Math.round(costSalaries * proration),
+      costOverheadPkr: Math.round(costOverhead * proration),
       costBasePkr,
+      costBaseFullPkr,
       profitPkr,
       payoutPkr,
       projectCount: rows.length,
@@ -221,7 +256,16 @@ export async function computeBdSettlements(
 
   settlements.sort((a, b) => a.bdName.localeCompare(b.bdName));
 
-  return { monthKey, costBase, settlements, warnings };
+  return {
+    monthKey,
+    costBase,
+    settlements,
+    warnings,
+    elapsedWorkDays,
+    workDaysInMonth,
+    prorationPct: Number((proration * 100).toFixed(2)),
+    isCurrentMonth,
+  };
 }
 
 /** Compute and persist. Returns the run so the caller can surface warnings. */
@@ -240,6 +284,10 @@ export async function recomputeBdSettlements(
       costSalariesPkr: s.costSalariesPkr.toFixed(2),
       costOverheadPkr: s.costOverheadPkr.toFixed(2),
       costBasePkr: s.costBasePkr.toFixed(2),
+      costBaseFullPkr: s.costBaseFullPkr.toFixed(2),
+      prorationPct: run.prorationPct.toFixed(2),
+      elapsedWorkDays: run.elapsedWorkDays,
+      workDaysInMonth: run.workDaysInMonth,
       profitPkr: s.profitPkr.toFixed(2),
       payoutPkr: s.payoutPkr.toFixed(2),
       projectCount: s.projectCount,

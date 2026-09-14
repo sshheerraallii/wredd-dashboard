@@ -10,6 +10,8 @@ import { BdCommissionTab } from "@prisma/client";
 
 import { resolveBdCommissionTabs } from "@/lib/bd-commission/resolve";
 import { getActiveBdProjectsWithEstimates, getBdCommissionLedger } from "@/lib/bd-commission/queries";
+import { computeDepartmentCostBase, blendedHourCostPkr } from "@/lib/bd-settlement/cost-base";
+import { computeBdSettlements } from "@/lib/bd-settlement/compute";
 
 type UiTab = "ACTIVE" | "CLEARING" | "DUE" | "PAID";
 
@@ -198,6 +200,50 @@ export default async function BdCommissionPage({
   const totalMonthLabel =
     tab === "ACTIVE" ? activeMeta.monthKeyUsed ?? (monthKey ?? "-") : monthKey ?? "All";
 
+  // Contribution = what a project clears against the cost of the hours it used,
+  // priced at FULL capacity. It is a per-project quality score, never a payout.
+  let blendedRate = 0;
+  let breakEven: { revenue: number; used: number; capacity: number; contribution: number } | null =
+    null;
+  const hoursByProject = new Map<string, number>();
+
+  if (tab === "ACTIVE" && rows.length > 0) {
+    try {
+      const mk = activeMeta?.monthKeyUsed ?? monthKey ?? "";
+      if (/^\d{4}-\d{2}$/.test(mk)) {
+        const cb = await computeDepartmentCostBase(mk);
+        blendedRate = blendedHourCostPkr(cb);
+
+        const assignments = await prisma.projectAssignment.findMany({
+          where: {
+            projectId: { in: rows.map((r: any) => r.id) },
+            unassignedAt: null,
+          },
+          select: { projectId: true, allocatedHours: true },
+        });
+        for (const a of assignments) {
+          hoursByProject.set(
+            a.projectId,
+            (hoursByProject.get(a.projectId) ?? 0) + (a.allocatedHours ?? 0)
+          );
+        }
+
+        const run = await computeBdSettlements(mk);
+        const mine = run.settlements.find((x) => x.bdId === bdId);
+        if (mine) {
+          breakEven = {
+            revenue: mine.costBaseFullPkr,
+            used: mine.usedHours,
+            capacity: mine.capacityHours,
+            contribution: 0,
+          };
+        }
+      }
+    } catch {
+      // Contribution is decoration — never break the ledger over it.
+    }
+  }
+
   return (
     <div className="p-6 space-y-4">
       <div className="rounded-2xl border bg-muted/40 p-4">
@@ -207,9 +253,10 @@ export default async function BdCommissionPage({
         <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
           What you are paid is calculated once per month: revenue delivered,
           minus remote payouts, minus your share of the team&apos;s running cost.
-          The per-project figures below are for margin analysis &mdash; they show
-          whether an individual job paid for itself, and no longer decide your
-          payout.
+          The per-project figures below are for margin analysis &mdash;{" "}
+          <strong>Contribution</strong> shows what a job clears against the cost
+          of the hours it used, priced at full capacity. It is not your
+          commission, and no single project decides your payout.
         </p>
         <Link
           href="/app/bd/settlement"
@@ -217,6 +264,19 @@ export default async function BdCommissionPage({
         >
           Open monthly settlement &rarr;
         </Link>
+
+        {breakEven ? (
+          <div className="mt-3 rounded-xl border bg-background p-3">
+            <p className="text-sm leading-relaxed">
+              This month: <strong>{rows.length}</strong> project(s),{" "}
+              <strong>{Math.round(breakEven.used).toLocaleString()}</strong>{" "}
+              hours used of{" "}
+              <strong>{Math.round(breakEven.capacity).toLocaleString()}</strong>{" "}
+              available. You break even at{" "}
+              <strong>{fmtPkr(breakEven.revenue)} PKR</strong> of revenue.
+            </p>
+          </div>
+        ) : null}
       </div>
 
       <div className="flex items-start justify-between gap-3">
@@ -346,7 +406,7 @@ export default async function BdCommissionPage({
               <th className="p-3">Tab</th>
               <th className="p-3">Month</th>
               <th className="p-3">Due</th>
-              <th className="p-3">BD Payout (PKR)</th>
+              <th className="p-3">{tab === "ACTIVE" ? "Contribution (PKR)" : "BD Payout (PKR)"}</th>
             </tr>
           </thead>
 
@@ -386,7 +446,23 @@ export default async function BdCommissionPage({
                     <td className="p-3">ACTIVE</td>
                     <td className="p-3">{p.estimateMonthKey ?? "-"}</td>
                     <td className="p-3">-</td>
-                    <td className="p-3">{fmtPkr(p.estimatedProfitPkr ?? "-")}</td>
+                    <td className="p-3">
+                      {(() => {
+                        if (blendedRate <= 0) return "-";
+                        const hrs = hoursByProject.get(p.id) ?? 0;
+                        const net = toNum(p.netPkr ?? f?.netPkr);
+                        if (net <= 0) return "-";
+                        const contribution = net - hrs * blendedRate;
+                        return (
+                          <span className={contribution < 0 ? "text-red-600" : ""}>
+                            {fmtPkr(Math.round(contribution))}
+                            <span className="block text-[11px] text-muted-foreground">
+                              {hrs}h &times; {blendedRate}
+                            </span>
+                          </span>
+                        );
+                      })()}
+                    </td>
                   </tr>
                 );
               })

@@ -118,6 +118,18 @@ export default async function BdSettlementPage({
         </p>
       </div>
 
+      {run?.isCurrentMonth ? (
+        <div className="rounded-2xl border border-amber-500/40 bg-amber-500/5 p-3">
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            <strong className="text-foreground">Month in progress.</strong>{" "}
+            {run.elapsedWorkDays} of {run.workDaysInMonth} working days elapsed,
+            so your cost base below is charged at {run.prorationPct}% to match
+            the revenue booked so far. At month end it settles at the full
+            amount.
+          </p>
+        </div>
+      ) : null}
+
       {error ? (
         <div className="rounded-2xl border border-red-500/40 bg-red-500/5 p-4">
           <div className="text-sm font-medium">Settlement unavailable</div>
@@ -170,9 +182,17 @@ export default async function BdSettlementPage({
               <Row
                 label="Your cost base"
                 value={`\u2212 ${fmt(s.costBasePkr)}`}
-                detail={`salaries ${fmt(s.costSalariesPkr)} + overhead ${fmt(
-                  s.costOverheadPkr
-                )}`}
+                detail={
+                  run?.isCurrentMonth
+                    ? `salaries ${fmt(s.costSalariesPkr)} + overhead ${fmt(
+                        s.costOverheadPkr
+                      )} \u2014 ${run.prorationPct}% of the month's ${fmt(
+                        s.costBaseFullPkr
+                      )}`
+                    : `salaries ${fmt(s.costSalariesPkr)} + overhead ${fmt(
+                        s.costOverheadPkr
+                      )}`
+                }
               />
               <div className="flex items-baseline justify-between border-t pt-2">
                 <span className="text-sm font-medium">Profit</span>
