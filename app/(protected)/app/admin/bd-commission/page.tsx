@@ -392,7 +392,7 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
                   <th className="p-2">Revenue</th>
                   <th className="p-2">Remote payouts</th>
                   <th className="p-2">Cost base</th>
-                  <th className="p-2">Project margin</th>
+                  <th className="p-2">Profit</th>
                   <th className="p-2">Rate</th>
                   <th className="p-2">Payout</th>
                   <th className="p-2">Capacity used</th>
@@ -589,7 +589,7 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
           <div className="text-lg font-semibold">{fmtMoneyPkr(totals.profitPkr)}</div>
         </div>
         <div className="rounded border p-3">
-          <div className="text-xs text-muted-foreground">BD Payout (PKR)</div>
+          <div className="text-xs text-muted-foreground">{tab === "ACTIVE" ? "BD Payout (PKR, legacy)" : "BD Payout (PKR)"}</div>
           <div className="text-lg font-semibold">{tab === "ACTIVE" ? "-" : fmtMoneyPkr(totals.bdPayoutPkr)}</div>
         </div>
         <div className="rounded border p-3">
@@ -679,6 +679,18 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
         </div>
       </div>
 
+{/* Per-project history — NOT the payable. */}
+      <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-3">
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          <strong className="text-foreground">Below is per-project history.</strong>{" "}
+          ACTIVE estimates and the BD Payout / Company columns on settled tabs
+          were produced by the old per-project formula and are kept as a record
+          of what was actually paid. What is owed now comes from the monthly
+          settlement above &mdash; these rows answer a different question: did an
+          individual job clear the hours it used.
+        </p>
+      </div>
+
       {/* Table */}
       <div className="rounded border overflow-auto">
         <table className="min-w-[1400px] w-full text-sm">
@@ -693,8 +705,10 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
               <th className="p-2">Price</th>
               <th className="p-2">Fee %</th>
               <th className="p-2">Fee (USD)</th>
-              <th className="p-2">Profit</th>
-              <th className="p-2">BD Payout</th>
+              <th className="p-2">Project margin</th>
+              <th className="p-2">
+                {tab === "ACTIVE" ? "BD Payout (legacy)" : "BD Payout"}
+              </th>
               <th className="p-2">Company</th>
               <th className="p-2">Due</th>
               <th className="p-2">{tab === "PAID" ? "Paid At" : "Payable"}</th>
