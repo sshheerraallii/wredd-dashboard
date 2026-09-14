@@ -15,6 +15,11 @@ import {
 import { fmtMoneyPkr } from "@/lib/bd-commission/totals";
 import { getPrisma } from "@/lib/prisma";
 import { computeBdSettlements } from "@/lib/bd-settlement/compute";
+import {
+  getFullCapacityContext,
+  getProjectHours,
+  projectAtFullCapacity,
+} from "@/lib/bd-settlement/project-payout";
 
 import {
   createBdAdjustment,
@@ -337,6 +342,40 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
     settlementRun = await computeBdSettlements(settlementMonth);
   } catch (e) {
     settlementError = e instanceof Error ? e.message : "Settlement unavailable.";
+  }
+
+  // "At 100% capacity" column inputs.
+  const fullCap = await getFullCapacityContext(settlementMonth);
+  const fxCfg = await prisma.monthlyFinanceConfig.findUnique({
+    where: { monthKey: settlementMonth },
+    select: { fxRate: true },
+  });
+  const fxForMonth = toNum(fxCfg?.fxRate);
+  const projectHours = await getProjectHours(
+    rows.map((r: any) => (r.kind === "adjustment" ? null : r.projectId ?? r.id))
+  );
+  const rateByBd = new Map<string, number>(
+    (settlementRun?.settlements ?? []).map((x) => [x.bdId, x.bdRate])
+  );
+
+  function fullCapCell(bdId: string | null, projectId: string | null, netPkr: number, remote: number) {
+    if (!fullCap || !projectId || netPkr <= 0) return "-";
+    const rate = bdId ? rateByBd.get(bdId) ?? 0 : 0;
+    const r = projectAtFullCapacity({
+      netPkr,
+      remotePayoutPkr: remote,
+      hours: projectHours.get(projectId) ?? 0,
+      blendedRate: fullCap.blendedRate,
+      bdRate: rate,
+    });
+    return (
+      <span className={r.payoutPkr < 0 ? "text-red-600" : ""}>
+        {fmtMoneyPkr(r.payoutPkr)}
+        <span className="block text-[11px] text-muted-foreground">
+          {r.hours}h &times; {fullCap.blendedRate} = {fmtMoneyPkr(r.hourCostPkr)}
+        </span>
+      </span>
+    );
   }
 
   return (
@@ -689,6 +728,15 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
           settlement above &mdash; these rows answer a different question: did an
           individual job clear the hours it used.
         </p>
+        <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+          <strong className="text-foreground">At 100% capacity</strong> shows
+          what each project would pay the BD if every sellable hour were sold,
+          at {fullCap ? fullCap.blendedRate : "-"} PKR per hour. These figures
+          add up to the monthly commission &mdash; but only at full utilisation.
+          Unsold hours belong to no project, so at partial capacity projects can
+          look profitable while the month is a loss. It is a target, not a
+          forecast.
+        </p>
       </div>
 
       {/* Table */}
@@ -706,6 +754,7 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
               <th className="p-2">Fee %</th>
               <th className="p-2">Fee (USD)</th>
               <th className="p-2">Project margin</th>
+              <th className="p-2">At 100% capacity</th>
               <th className="p-2">
                 {tab === "ACTIVE" ? "BD Payout (legacy)" : "BD Payout"}
               </th>
@@ -767,6 +816,17 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
                       {!r.estimateHasConfig ? (
                         <div className="text-xs text-red-600">Missing MonthlyFinanceConfig</div>
                       ) : null}
+                    </td>
+
+                    <td className="p-2">
+                      {fullCapCell(
+                        r.bdOwner?.id ?? null,
+                        r.id,
+                        toNum(r.finance?.priceUsd) *
+                          (1 - toNum(r.finance?.platformFeePercent) / 100) *
+                          fxForMonth,
+                        0
+                      )}
                     </td>
 
                     <td className="p-2">-</td>
@@ -835,6 +895,17 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
 
 <td className={`p-2 ${isNegative(r.profitPkr) ? "text-red-600 font-medium" : ""}`}>
                       {fmtMoneyPkr(Number(r.profitPkr ?? 0))}
+                    </td>
+
+                    <td className="p-2">
+                      {isAdj
+                        ? "-"
+                        : fullCapCell(
+                            r.bdId ?? r.bd?.id ?? null,
+                            r.projectId ?? null,
+                            toNum(r.netPkr),
+                            toNum(r.workerPayoutPkr)
+                          )}
                     </td>
                     <td className={`p-2 ${isNegative(r.bdPayoutPkr) ? "text-red-600 font-medium" : ""}`}>
                       {fmtMoneyPkr(Number(r.bdPayoutPkr ?? 0))}
