@@ -200,7 +200,27 @@ export default async function BdCommissionPage({
 
   return (
     <div className="p-6 space-y-4">
+      <div className="rounded-2xl border bg-muted/40 p-4">
+        <div className="text-sm font-medium">
+          Commission is now settled monthly
+        </div>
+        <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+          What you are paid is calculated once per month: revenue delivered,
+          minus remote payouts, minus your share of the team&apos;s running cost.
+          The per-project figures below are for margin analysis &mdash; they show
+          whether an individual job paid for itself, and no longer decide your
+          payout.
+        </p>
+        <Link
+          href="/app/bd/settlement"
+          className="mt-3 inline-block rounded-xl border bg-background px-3 py-1.5 text-sm hover:bg-muted"
+        >
+          Open monthly settlement &rarr;
+        </Link>
+      </div>
+
       <div className="flex items-start justify-between gap-3">
+
         <div>
           <h1 className="text-xl font-semibold">My Commissions</h1>
           <p className="text-sm text-muted-foreground">

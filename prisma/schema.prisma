@@ -62,6 +62,7 @@ model User {
   clientPaymentReceiptsRecorded ClientPaymentReceipt[] @relation("ClientPaymentReceiptRecordedBy")
   rateHistory                   UserRateHistory[]      @relation("UserRateHistoryUser")
   rateHistoryCreated            UserRateHistory[]      @relation("UserRateHistoryCreatedBy")
+  bdSettlements                 BdMonthlySettlement[]  @relation("BdSettlementBd")
 
   @@index([role])
   @@index([workerType])
@@ -76,6 +77,7 @@ model MonthlyFinanceConfig {
   fxRate                 Decimal   @db.Decimal(12, 4)
   avgOnsiteHourCostPkr   Int
   remoteOverheadFixedPkr Int
+  overheadPoolPkr        Int       @default(0)
   workingDays            Int?
   finalizedAt            DateTime?
   notes                  String?
@@ -841,4 +843,31 @@ model UserRateHistory {
 
   @@unique([userId, effectiveFrom])
   @@index([effectiveFrom])
+}
+
+model BdMonthlySettlement {
+  id                String   @id @default(cuid())
+  monthKey          String
+  bdId              String
+  bdRate            Decimal  @db.Decimal(5, 4)
+  revenuePkr        Decimal  @db.Decimal(14, 2)
+  remotePayoutPkr   Decimal  @db.Decimal(14, 2)
+  costSalariesPkr   Decimal  @db.Decimal(14, 2)
+  costOverheadPkr   Decimal  @db.Decimal(14, 2)
+  costBasePkr       Decimal  @db.Decimal(14, 2)
+  profitPkr         Decimal  @db.Decimal(14, 2)
+  payoutPkr         Decimal  @db.Decimal(14, 2)
+  projectCount      Int      @default(0)
+  excludedPaidCount Int      @default(0)
+  capacityHours     Decimal  @default(0) @db.Decimal(10, 2)
+  usedHours         Decimal  @default(0) @db.Decimal(10, 2)
+  computedAt        DateTime @default(now())
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  bd User @relation("BdSettlementBd", fields: [bdId], references: [id], onDelete: Cascade)
+
+  @@unique([monthKey, bdId])
+  @@index([monthKey])
+  @@index([bdId])
 }

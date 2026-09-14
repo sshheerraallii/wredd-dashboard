@@ -8,6 +8,7 @@ import {
   updateMonth,
   updateOnsiteConstants,
   updateOnsiteOverheads,
+  recomputeSettlements,
 } from "./actions";
 import { UnfinalizeButton, RecalculateButton } from "./month-action-buttons";
 import { getOnsiteConstants } from "@/lib/onsite-points/settings";
@@ -178,6 +179,13 @@ export default async function FinanceConfigPage({
 
                 {/* Recalculate — always available when row exists */}
                 <RecalculateButton monthKey={selected} />
+
+                <form action={recomputeSettlements}>
+                  <input type="hidden" name="monthKey" value={selected} />
+                  <button className="rounded-xl border px-4 py-2 text-sm hover:bg-muted">
+                    Settle month
+                  </button>
+                </form>
               </div>
             )}
           </div>
@@ -234,6 +242,27 @@ export default async function FinanceConfigPage({
                     className="w-full rounded-xl border bg-background px-3 py-2 text-sm disabled:opacity-60"
                     placeholder="e.g. 250000"
                   />
+                </div>
+
+                <div className="space-y-1 md:col-span-2">
+                  <label className="text-xs text-muted-foreground">
+                    Monthly Overhead Pool (PKR)
+                  </label>
+                  <input
+                    name="overheadPoolPkr"
+                    defaultValue={row.overheadPoolPkr ?? ""}
+                    disabled={isFinalized}
+                    className="w-full rounded-xl border bg-background px-3 py-2 text-sm disabled:opacity-60"
+                    placeholder="e.g. 462591"
+                  />
+                  <p className="text-[11px] leading-relaxed text-muted-foreground">
+                    Everything that is not a production salary: rent,
+                    electricity, internet, HR, office, petty cash,
+                    subscriptions, ads and platform plans. Split between
+                    departments by capacity, then charged to BDs by their
+                    department allocation. Carried forward automatically when
+                    you create a new month.
+                  </p>
                 </div>
 
                 <div className="space-y-1 md:col-span-2">

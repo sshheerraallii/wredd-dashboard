@@ -12,6 +12,7 @@ import {
   getOnsiteOverheadSettings,
   setOnsiteOverheadSettings,
 } from "@/lib/onsite-points/overhead-settings";
+import { recomputeBdSettlements } from "@/lib/bd-settlement/compute";
 
 const prisma = getPrisma();
 
@@ -36,6 +37,7 @@ const UpdateSchema = z.object({
   fxRate: z.coerce.number().positive("fxRate must be > 0"),
   avgOnsiteHourCostPkr: z.coerce.number().min(0, "avgOnsiteHourCostPkr must be >= 0"),
   remoteOverheadFixedPkr: z.coerce.number().min(0, "remoteOverheadFixedPkr must be >= 0"),
+  overheadPoolPkr: z.coerce.number().min(0, "overheadPoolPkr must be >= 0"),
   notes: z.string().max(2000).optional().nullable(),
 });
 
@@ -58,7 +60,16 @@ export async function createMonth(formData: FormData) {
     );
   }
 
-  const monthKey = parsed.data.monthKey;
+  const monthKey = parsed.data!.monthKey;
+
+  // Carry the overhead pool forward from the most recent earlier month — it
+  // barely moves month to month, and a 0 would silently make every BD's cost
+  // base salaries-only.
+  const previous = await prisma.monthlyFinanceConfig.findFirst({
+    where: { monthKey: { lt: monthKey } },
+    orderBy: { monthKey: "desc" },
+    select: { overheadPoolPkr: true },
+  });
 
   await prisma.monthlyFinanceConfig.upsert({
     where: { monthKey },
@@ -67,6 +78,7 @@ export async function createMonth(formData: FormData) {
       fxRate: "0",
       avgOnsiteHourCostPkr: 0,
       remoteOverheadFixedPkr: 0,
+      overheadPoolPkr: previous?.overheadPoolPkr ?? 0,
       notes: null,
       finalizedAt: null,
     },
@@ -85,6 +97,7 @@ export async function updateMonth(formData: FormData) {
     fxRate: formData.get("fxRate"),
     avgOnsiteHourCostPkr: formData.get("avgOnsiteHourCostPkr"),
     remoteOverheadFixedPkr: formData.get("remoteOverheadFixedPkr"),
+    overheadPoolPkr: formData.get("overheadPoolPkr"),
     notes: (formData.get("notes") as string | null) ?? null,
   };
 
@@ -97,7 +110,8 @@ export async function updateMonth(formData: FormData) {
     );
   }
 
-  const { monthKey, fxRate, avgOnsiteHourCostPkr, remoteOverheadFixedPkr, notes } = parsed.data;
+  const { monthKey, fxRate, avgOnsiteHourCostPkr, remoteOverheadFixedPkr, overheadPoolPkr, notes } =
+    parsed.data!;
 
   const existing = await prisma.monthlyFinanceConfig.findUnique({
     where: { monthKey },
@@ -122,6 +136,7 @@ export async function updateMonth(formData: FormData) {
       fxRate: fxRate.toFixed(4), // Decimal
       avgOnsiteHourCostPkr: Math.round(avgOnsiteHourCostPkr), // INT
       remoteOverheadFixedPkr: Math.round(remoteOverheadFixedPkr), // INT
+      overheadPoolPkr: Math.round(overheadPoolPkr), // INT
       notes: notes?.trim() ? notes.trim() : null,
     },
   });
@@ -403,4 +418,54 @@ export async function updateOnsiteOverheads(formData: FormData) {
     : "Rate model saved. Existing worker rates are unchanged — re-enter them if the overhead moved.";
 
   redirect(`/app/admin/finance-config?ok=1&msg=${encodeURIComponent(msg)}`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Monthly BD settlement (absorption costing)
+//
+//   revenue - remote payouts - cost base = profit;  payout = profit x bdRate
+//
+// Recomputing is always safe: projects already marked PAID or EXCEPTION_PAID
+// are excluded from the maths entirely, so settled money never moves.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function recomputeSettlements(formData: FormData) {
+  const session = await readSession();
+  requireSuperAdmin(session?.user?.role);
+
+  const parsed = MonthKeySchema.safeParse(
+    String(formData.get("monthKey") ?? "").trim()
+  );
+  if (!parsed.success) {
+    redirect(
+      `/app/admin/finance-config?err=${encodeURIComponent(
+        parsed.error.issues[0]?.message ?? "invalid monthKey"
+      )}`
+    );
+  }
+
+  const monthKey = parsed.data!;
+
+  let msg: string;
+  try {
+    const run = await recomputeBdSettlements(monthKey);
+    const total = run.settlements.reduce((a, s) => a + s.payoutPkr, 0);
+    msg = `Settled ${run.settlements.length} BD(s) for ${monthKey}. Total payout ${total.toLocaleString()} PKR.`;
+    if (run.warnings.length > 0) {
+      msg += ` Warnings: ${run.warnings.join(" | ")}`;
+    }
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : "Settlement failed";
+    redirect(
+      `/app/admin/finance-config?monthKey=${encodeURIComponent(
+        monthKey
+      )}&err=${encodeURIComponent(detail)}`
+    );
+  }
+
+  redirect(
+    `/app/admin/finance-config?monthKey=${encodeURIComponent(
+      monthKey
+    )}&ok=1&msg=${encodeURIComponent(msg)}`
+  );
 }
