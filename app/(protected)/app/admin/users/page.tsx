@@ -54,8 +54,11 @@ function whereForTab(tab: TabKey) {
     case "staff":
       return {
         ...active,
+        // NOTE: "BD" is NOT a Prisma Role value — the enum is SUPER_ADMIN,
+        // MANAGER, BUSINESS_DEVELOPER, REMOTE_WORKER, ONSITE_EMPLOYEE. An
+        // unknown enum member makes Prisma throw at request time.
         role: {
-          in: ["SUPER_ADMIN", "MANAGER", "BUSINESS_DEVELOPER", "BD"] as never[],
+          in: ["SUPER_ADMIN", "MANAGER", "BUSINESS_DEVELOPER"] as never[],
         },
       };
     default:
