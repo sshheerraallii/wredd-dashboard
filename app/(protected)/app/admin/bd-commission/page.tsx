@@ -14,6 +14,7 @@ import {
 } from "@/lib/bd-commission/queries";
 import { fmtMoneyPkr } from "@/lib/bd-commission/totals";
 import { getPrisma } from "@/lib/prisma";
+import { computeBdSettlements } from "@/lib/bd-settlement/compute";
 
 import {
   createBdAdjustment,
@@ -325,15 +326,129 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
   const defaultAdjMonth = monthKeyFromDate(new Date());
   const returnToForAdj = qp({ ...current }, { tab: "CLEARING", page: 1 });
 
+  // Monthly settlement summary — the figures that actually decide payouts.
+  // The per-project table below is margin analysis and no longer the payable.
+  let settlementRun: Awaited<ReturnType<typeof computeBdSettlements>> | null = null;
+  let settlementError: string | null = null;
+  const settlementMonth = /^\d{4}-\d{2}$/.test(monthKeyForInput ?? "")
+    ? (monthKeyForInput as string)
+    : monthKeyFromDate(new Date());
+  try {
+    settlementRun = await computeBdSettlements(settlementMonth);
+  } catch (e) {
+    settlementError = e instanceof Error ? e.message : "Settlement unavailable.";
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2">
         <div>
           <h1 className="text-xl font-semibold">BD Commissions</h1>
           <p className="text-sm text-muted-foreground">
-            ACTIVE = in-progress projects (estimated). CLEARING / DUE / PAID = ledger snapshots (includes adjustments).
+            Payouts are settled monthly (top). The per-project table below is
+            margin analysis only.
           </p>
         </div>
+      </div>
+
+      {/* ── Monthly settlement (absorption costing) ── */}
+      <div className="rounded-2xl border bg-card p-4 space-y-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <div>
+            <div className="text-sm font-medium">
+              Monthly settlement &mdash; {settlementMonth}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              revenue &minus; remote payouts &minus; cost base = profit; payout
+              = profit &times; rate
+            </p>
+          </div>
+          <Link
+            href={`/app/bd/settlement?month=${settlementMonth}`}
+            className="rounded-xl border px-3 py-1.5 text-sm hover:bg-muted"
+          >
+            Full settlement view &rarr;
+          </Link>
+        </div>
+
+        {settlementRun?.isCurrentMonth ? (
+          <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-2">
+            <p className="text-xs text-muted-foreground">
+              Month in progress &mdash; {settlementRun.elapsedWorkDays} of{" "}
+              {settlementRun.workDaysInMonth} working days elapsed, cost base
+              charged at {settlementRun.prorationPct}%.
+            </p>
+          </div>
+        ) : null}
+
+        {settlementError ? (
+          <p className="text-sm text-red-600">{settlementError}</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/40">
+                <tr className="text-left">
+                  <th className="p-2">BD</th>
+                  <th className="p-2">Revenue</th>
+                  <th className="p-2">Remote payouts</th>
+                  <th className="p-2">Cost base</th>
+                  <th className="p-2">Project margin</th>
+                  <th className="p-2">Rate</th>
+                  <th className="p-2">Payout</th>
+                  <th className="p-2">Capacity used</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(settlementRun?.settlements ?? []).map((x) => (
+                  <tr key={x.bdId} className="border-t">
+                    <td className="p-2">
+                      <Link
+                        className="underline"
+                        href={`/app/bd/settlement?month=${settlementMonth}&bd=${x.bdId}`}
+                      >
+                        {x.bdName}
+                      </Link>
+                    </td>
+                    <td className="p-2">{fmtMoneyPkr(x.revenuePkr)}</td>
+                    <td className="p-2">{fmtMoneyPkr(x.remotePayoutPkr)}</td>
+                    <td className="p-2">
+                      {fmtMoneyPkr(x.costBasePkr)}
+                      <span className="block text-[11px] text-muted-foreground">
+                        sal {fmtMoneyPkr(x.costSalariesPkr)} + ovh{" "}
+                        {fmtMoneyPkr(x.costOverheadPkr)}
+                      </span>
+                    </td>
+                    <td className={`p-2 ${x.profitPkr < 0 ? "text-red-600" : ""}`}>
+                      {fmtMoneyPkr(x.profitPkr)}
+                    </td>
+                    <td className="p-2">{(x.bdRate * 100).toFixed(0)}%</td>
+                    <td className="p-2 font-semibold">
+                      {fmtMoneyPkr(x.payoutPkr)}
+                    </td>
+                    <td className="p-2">
+                      {Math.round(x.usedHours).toLocaleString()} /{" "}
+                      {Math.round(x.capacityHours).toLocaleString()} h
+                      <span className="block text-[11px] text-muted-foreground">
+                        {x.capacityHours > 0
+                          ? Math.round((x.usedHours / x.capacityHours) * 100)
+                          : 0}
+                        %
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {settlementRun && settlementRun.warnings.length > 0 ? (
+          <ul className="list-disc pl-5 text-xs text-amber-700 dark:text-amber-500">
+            {settlementRun.warnings.map((w, i) => (
+              <li key={i}>{w}</li>
+            ))}
+          </ul>
+        ) : null}
       </div>
 
       {/* Add Adjustment */}
@@ -470,7 +585,7 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
           <div className="text-lg font-semibold">{totals.count}</div>
         </div>
         <div className="rounded border p-3">
-          <div className="text-xs text-muted-foreground">{tab === "ACTIVE" ? "Profit (PKR, est.)" : "Profit (PKR)"}</div>
+          <div className="text-xs text-muted-foreground">{tab === "ACTIVE" ? "Project margin (PKR, est.)" : "Project margin (PKR)"}</div>
           <div className="text-lg font-semibold">{fmtMoneyPkr(totals.profitPkr)}</div>
         </div>
         <div className="rounded border p-3">
