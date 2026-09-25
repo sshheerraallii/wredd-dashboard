@@ -54,6 +54,18 @@ export type BdSettlement = {
   capacityHours: number;
   usedHours: number;
   allocations: { departmentId: string; name: string; sharePercent: number; chargedPkr: number }[];
+  /** The unpaid projects counted in this settlement, for per-project attribution. */
+  projects: SettlementProject[];
+};
+
+export type SettlementProject = {
+  projectId: string;
+  title: string;
+  workType: string;
+  netPkr: number;
+  remotePayoutPkr: number;
+  /** Onsite hours only. Remote projects never consume floor capacity. */
+  hours: number;
 };
 
 export type SettlementRun = {
@@ -214,7 +226,14 @@ export async function computeBdSettlements(
         paidAt: null,
         exceptionPaidAt: null,
       },
-      select: { netPkr: true, workerPayoutPkr: true, allowedHours: true },
+      select: {
+        projectId: true,
+        netPkr: true,
+        workerPayoutPkr: true,
+        allowedHours: true,
+        workType: true,
+        project: { select: { title: true } },
+      },
     });
 
     const excludedPaidCount = await c.bdCommission.count({
@@ -227,7 +246,11 @@ export async function computeBdSettlements(
 
     const revenuePkr = rows.reduce((a, r) => a + toNum(r.netPkr), 0);
     const remotePayoutPkr = rows.reduce((a, r) => a + toNum(r.workerPayoutPkr), 0);
-    const usedHours = rows.reduce((a, r) => a + (r.allowedHours ?? 0), 0);
+    // Hours only drive capacity used and per-project attribution — never the
+    // profit. Remote projects are excluded defensively: they use no floor time.
+    const onsiteHours = (r: { workType: string; allowedHours: number | null }) =>
+      String(r.workType) === "ONSITE" ? r.allowedHours ?? 0 : 0;
+    const usedHours = rows.reduce((a, r) => a + onsiteHours(r), 0);
 
     const costBaseFullPkr = Math.round(costSalaries + costOverhead);
     const costBasePkr = Math.round(costBaseFullPkr * proration);
@@ -251,6 +274,14 @@ export async function computeBdSettlements(
       capacityHours: Number(capacityHours.toFixed(2)),
       usedHours,
       allocations: allocOut.sort((a, b) => a.name.localeCompare(b.name)),
+      projects: rows.map((r) => ({
+        projectId: r.projectId,
+        title: r.project?.title ?? r.projectId,
+        workType: String(r.workType),
+        netPkr: toNum(r.netPkr),
+        remotePayoutPkr: toNum(r.workerPayoutPkr),
+        hours: onsiteHours(r),
+      })),
     });
   }
 
