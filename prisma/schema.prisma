@@ -28,6 +28,7 @@ model User {
   bdCommissions             BdCommission[]           @relation("BdCommissionBd")
   bdCommissionExceptionPaid BdCommission[]           @relation("BdCommissionExceptionPaidBy")
   bdCommissionPaid          BdCommission[]           @relation("BdCommissionPaidBy")
+  bdCommissionHoursOverride BdCommission[]           @relation("BdCommissionHoursOverrideBy")
   bdAdjustments             BdCommissionAdjustment[]
   createdBdAdjustments      BdCommissionAdjustment[] @relation("BdAdjustmentCreatedBy")
   notifications             Notification[]           @relation("NotificationRecipient")
@@ -301,6 +302,13 @@ model BdCommission {
   paidNote               String?
   platformFeePercent     Decimal?        @db.Decimal(5, 2)
   workerPayoutPkr        Decimal         @default(0) @db.Decimal(14, 2)
+  /// Super Admin override of the hours used for BD settlement only.
+  /// Null = use allowedHours. Never touches worker points or pace.
+  hoursOverride          Int?
+  hoursOverrideById      String?
+  hoursOverrideAt        DateTime?
+  hoursOverrideNote      String?
+  hoursOverrideBy        User?           @relation("BdCommissionHoursOverrideBy", fields: [hoursOverrideById], references: [id])
   bd                     User            @relation("BdCommissionBd", fields: [bdId], references: [id])
   exceptionPaidBy        User?           @relation("BdCommissionExceptionPaidBy", fields: [exceptionPaidById], references: [id])
   paidBy                 User?           @relation("BdCommissionPaidBy", fields: [paidById], references: [id])

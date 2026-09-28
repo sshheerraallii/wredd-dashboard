@@ -21,6 +21,7 @@ import {
   type BdSettlement,
   type SettlementRun,
 } from "@/lib/bd-settlement/compute";
+import { setSettlementHoursOverride } from "./actions";
 import {
   attributeSettlement,
   type Attribution,
@@ -219,7 +220,9 @@ export default async function BdSettlementPage({
               a={attributeSettlement(s, run as SettlementRun)}
               pipeline={pipelineByBd.get(s.bdId) ?? []}
               isAdmin={isAdmin}
+              isSuperAdmin={isSuperAdmin}
               monthKey={monthKey}
+              returnTo={qs(monthKey)}
             />
           ))
         : null}
@@ -233,14 +236,18 @@ function SettlementCard({
   a,
   pipeline,
   isAdmin,
+  isSuperAdmin,
   monthKey,
+  returnTo,
 }: {
   s: BdSettlement;
   run: SettlementRun;
   a: Attribution;
   pipeline: PipelineRow[];
   isAdmin: boolean;
+  isSuperAdmin: boolean;
   monthKey: string;
+  returnTo: string;
 }) {
   const cap = a.capacityHours;
   const usedPct = cap > 0 ? Math.round((a.usedHours / cap) * 100) : 0;
@@ -380,8 +387,26 @@ function SettlementCard({
                       </div>
                     ) : null}
                   </td>
-                  <td className="p-2 text-right tabular-nums">
-                    {p.workType === "ONSITE" ? hrs(p.hours) : "remote"}
+                  <td className="p-2 text-right tabular-nums align-top">
+                    {p.workType !== "ONSITE" ? (
+                      "remote"
+                    ) : isSuperAdmin ? (
+                      <HoursOverrideCell p={p} returnTo={returnTo} />
+                    ) : (
+                      <>
+                        {hrs(p.hours)}
+                        {p.overridden ? (
+                          <span className="ml-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                            adjusted
+                          </span>
+                        ) : null}
+                        {isAdmin && p.overridden ? (
+                          <div className="text-[10px] text-muted-foreground">
+                            allocated {hrs(p.allocatedHours)}
+                          </div>
+                        ) : null}
+                      </>
+                    )}
                   </td>
                   {isAdmin ? (
                     <>
@@ -516,6 +541,72 @@ function SettlementCard({
         </details>
       ) : null}
     </div>
+  );
+}
+
+function HoursOverrideCell({
+  p,
+  returnTo,
+}: {
+  p: Attribution["projects"][number];
+  returnTo: string;
+}) {
+  return (
+    <details className="inline-block text-right">
+      <summary className="cursor-pointer list-none underline decoration-dotted">
+        {hrs(p.hours)}
+        {p.overridden ? (
+          <span className="ml-1 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-700">
+            override
+          </span>
+        ) : null}
+      </summary>
+      <form
+        action={setSettlementHoursOverride}
+        className="mt-2 w-56 space-y-2 rounded-xl border bg-card p-2 text-left shadow-sm"
+      >
+        <input type="hidden" name="id" value={p.bdCommissionId} />
+        <input type="hidden" name="returnTo" value={returnTo} />
+        <div className="text-[11px] text-muted-foreground">
+          Allocated: {hrs(p.allocatedHours)} h
+          {p.overrideNote ? <div>Note: {p.overrideNote}</div> : null}
+        </div>
+        <input
+          type="number"
+          name="hours"
+          min={0}
+          step={1}
+          defaultValue={p.overridden ? p.hours : ""}
+          placeholder="Settlement hours"
+          className="w-full rounded-lg border bg-background px-2 py-1 text-sm"
+        />
+        <input
+          type="text"
+          name="note"
+          defaultValue={p.overrideNote ?? ""}
+          placeholder="Note (optional)"
+          className="w-full rounded-lg border bg-background px-2 py-1 text-sm"
+        />
+        <div className="flex gap-2">
+          <button
+            type="submit"
+            className="flex-1 rounded-lg bg-primary px-2 py-1 text-xs font-medium text-primary-foreground"
+          >
+            Save
+          </button>
+          {p.overridden ? (
+            <button
+              type="submit"
+              name="clear"
+              value="1"
+              className="flex-1 rounded-lg border px-2 py-1 text-xs"
+            >
+              Clear
+            </button>
+          ) : null}
+        </div>
+      </form>
+    </details>
   );
 }
 

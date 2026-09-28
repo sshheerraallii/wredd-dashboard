@@ -64,8 +64,14 @@ export type SettlementProject = {
   workType: string;
   netPkr: number;
   remotePayoutPkr: number;
-  /** Onsite hours only. Remote projects never consume floor capacity. */
+  bdCommissionId: string;
+  /** Onsite hours only. Remote projects never consume floor capacity.
+   *  = hoursOverride when set, else allowedHours. */
   hours: number;
+  /** allowedHours snapshot (sum of allocatedHours at completion). */
+  allocatedHours: number;
+  overridden: boolean;
+  overrideNote: string | null;
 };
 
 export type SettlementRun = {
@@ -227,10 +233,13 @@ export async function computeBdSettlements(
         exceptionPaidAt: null,
       },
       select: {
+        id: true,
         projectId: true,
         netPkr: true,
         workerPayoutPkr: true,
         allowedHours: true,
+        hoursOverride: true,
+        hoursOverrideNote: true,
         workType: true,
         project: { select: { title: true } },
       },
@@ -248,8 +257,13 @@ export async function computeBdSettlements(
     const remotePayoutPkr = rows.reduce((a, r) => a + toNum(r.workerPayoutPkr), 0);
     // Hours only drive capacity used and per-project attribution — never the
     // profit. Remote projects are excluded defensively: they use no floor time.
-    const onsiteHours = (r: { workType: string; allowedHours: number | null }) =>
-      String(r.workType) === "ONSITE" ? r.allowedHours ?? 0 : 0;
+    // A Super Admin hours override replaces allowedHours for settlement only.
+    const onsiteHours = (r: {
+      workType: unknown;
+      allowedHours: number | null;
+      hoursOverride: number | null;
+    }) =>
+      String(r.workType) === "ONSITE" ? r.hoursOverride ?? r.allowedHours ?? 0 : 0;
     const usedHours = rows.reduce((a, r) => a + onsiteHours(r), 0);
 
     const costBaseFullPkr = Math.round(costSalaries + costOverhead);
@@ -280,7 +294,11 @@ export async function computeBdSettlements(
         workType: String(r.workType),
         netPkr: toNum(r.netPkr),
         remotePayoutPkr: toNum(r.workerPayoutPkr),
+        bdCommissionId: r.id,
         hours: onsiteHours(r),
+        allocatedHours: String(r.workType) === "ONSITE" ? r.allowedHours ?? 0 : 0,
+        overridden: String(r.workType) === "ONSITE" && r.hoursOverride != null,
+        overrideNote: r.hoursOverrideNote ?? null,
       })),
     });
   }

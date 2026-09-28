@@ -21,6 +21,10 @@ import type { BdSettlement, SettlementRun } from "./compute";
 
 export type AttributedProject = {
   projectId: string;
+  bdCommissionId: string;
+  allocatedHours: number;
+  overridden: boolean;
+  overrideNote: string | null;
   title: string;
   workType: string;
   hours: number;
@@ -60,6 +64,10 @@ export function attributeSettlement(
       const contribution = p.netPkr - p.remotePayoutPkr - hourCost;
       return {
         projectId: p.projectId,
+        bdCommissionId: p.bdCommissionId,
+        allocatedHours: p.allocatedHours,
+        overridden: p.overridden,
+        overrideNote: p.overrideNote,
         title: p.title,
         workType: p.workType,
         hours: p.hours,
