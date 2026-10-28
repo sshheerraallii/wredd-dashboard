@@ -31,8 +31,11 @@ docker compose exec -T db pg_restore -U wredd -d wredd --no-owner --no-acl --exi
 docker compose exec -T db psql -q -U wredd -d wredd -c 'ANALYZE;' </dev/null
 
 echo "4/4 Comparing row counts, table by table"
-NEON_COUNTS=$(docker run --rm -i "$IMG" psql "$NEON_URL" -At -v ON_ERROR_STOP=1 < deploy/row-counts.sql)
-VPS_COUNTS=$(docker compose exec -T db psql -U wredd -d wredd -At -v ON_ERROR_STOP=1 < deploy/row-counts.sql)
+# Prints "table|rows" for every table in public, sorted. (Inline: *.sql files are gitignored.)
+ROW_COUNTS="SELECT string_agg(format('SELECT %L, count(*) FROM public.%I', tablename, tablename), ' UNION ALL ' ORDER BY tablename) || ' ORDER BY 1' FROM pg_tables WHERE schemaname = 'public'
+\\gexec"
+NEON_COUNTS=$(printf '%s\n' "$ROW_COUNTS" | docker run --rm -i "$IMG" psql "$NEON_URL" -At -v ON_ERROR_STOP=1)
+VPS_COUNTS=$(printf '%s\n' "$ROW_COUNTS" | docker compose exec -T db psql -U wredd -d wredd -At -v ON_ERROR_STOP=1)
 if [ "$NEON_COUNTS" = "$VPS_COUNTS" ]; then
   TABLES=$(printf '%s\n' "$VPS_COUNTS" | wc -l)
   ROWS=$(printf '%s\n' "$VPS_COUNTS" | awk -F'|' '{s+=$2} END {print s}')

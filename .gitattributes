@@ -1,5 +1,4 @@
 # keep server scripts Linux-style even when edited on Windows
 *.sh text eol=lf
-deploy/*.sql text eol=lf
 deploy/*.template text eol=lf
 docker-compose.yml text eol=lf
