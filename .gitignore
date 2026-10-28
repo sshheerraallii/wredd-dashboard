@@ -48,3 +48,6 @@ next-env.d.ts
 
 .vercel
 *.patch 
+
+# VPS deploy marker (secrets live in /opt/wredd-dashboard/.env, already ignored above)
+/.deployed

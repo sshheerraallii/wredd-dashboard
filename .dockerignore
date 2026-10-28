@@ -1,0 +1,8 @@
+.git
+node_modules
+.next
+deploy
+*.patch
+*.sql
+audit-dump.txt
+.env*

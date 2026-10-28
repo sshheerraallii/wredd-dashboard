@@ -1,0 +1,5 @@
+# Written by /opt/wredd-dashboard/deploy/setup.sh - edit the template in the repo, not this file.
+__APP_DOMAIN__ {
+	encode zstd gzip
+	reverse_proxy wredd-app:3000
+}
