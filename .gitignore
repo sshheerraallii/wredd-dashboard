@@ -51,3 +51,5 @@ next-env.d.ts
 
 # VPS deploy marker (secrets live in /opt/wredd-dashboard/.env, already ignored above)
 /.deployed
+
+.env*

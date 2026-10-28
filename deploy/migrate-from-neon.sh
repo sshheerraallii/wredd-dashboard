@@ -4,7 +4,8 @@
 #   bash /opt/wredd-dashboard/deploy/migrate-from-neon.sh
 set -euo pipefail
 cd /opt/wredd-dashboard
-set -a; . ./.env; set +a
+# Read NEON_URL on its own: Neon strings contain "&", which breaks sourcing .env without quotes.
+NEON_URL=$(grep -m1 '^NEON_URL=' .env | cut -d= -f2- | sed -e "s/^['\"]//" -e "s/['\"]\$//")
 : "${NEON_URL:?NEON_URL is empty in .env}"
 
 IMG=postgres:17-alpine
@@ -23,9 +24,9 @@ for _ in $(seq 1 30); do
   sleep 2
 done
 
-echo "3/4 Restoring (replaces whatever is in the VPS database)"
+echo "3/4 Restoring (replaces whatever is in the VPS database; the dump recreates the schema)"
 docker compose exec -T db psql -q -U wredd -d wredd -v ON_ERROR_STOP=1 \
-  -c 'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;' </dev/null
+  -c 'DROP SCHEMA IF EXISTS public CASCADE;' </dev/null
 docker compose exec -T db pg_restore -U wredd -d wredd --no-owner --no-acl --exit-on-error < "/root/backups/$NAME"
 docker compose exec -T db psql -q -U wredd -d wredd -c 'ANALYZE;' </dev/null
 
