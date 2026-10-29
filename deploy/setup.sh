@@ -10,7 +10,7 @@ cd "$DIR"
 [ -f .env ] || { echo "No .env yet: cp deploy/env.example .env && chmod 600 .env, then fill it in."; exit 1; }
 chmod 600 .env
 set -a; . <(grep -v '^NEON_URL=' .env); set +a
-for v in APP_DOMAIN POSTGRES_PASSWORD CRON_SECRET NEXTAUTH_SECRET RESEND_API_KEY \
+for v in APP_DOMAIN POSTGRES_PASSWORD CRON_SECRET NEXTAUTH_SECRET RESEND_API_KEY EMAIL_FROM \
          CLOUDINARY_CLOUD_NAME CLOUDINARY_API_KEY CLOUDINARY_API_SECRET; do
   [ -n "${!v:-}" ] || { echo "$v is empty in .env"; exit 1; }
 done
