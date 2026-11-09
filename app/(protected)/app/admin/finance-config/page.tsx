@@ -11,6 +11,12 @@ import {
   recomputeSettlements,
 } from "./actions";
 import { UnfinalizeButton, RecalculateButton } from "./month-action-buttons";
+import { CostModelSection, ExpenseLedgerSection } from "./_components/studio-sections";
+import {
+  costModelAt,
+  listCostModelChanges,
+  monthSegments,
+} from "@/lib/studio/cost-model";
 import { getOnsiteConstants } from "@/lib/onsite-points/settings";
 import {
   getOnsiteOverheadSettings,
@@ -71,6 +77,19 @@ export default async function FinanceConfigPage({
     : null;
 
   const isFinalized = !!row?.finalizedAt;
+
+  // STUDIO model: dated cost-model log + this month's expense ledger.
+  const costChanges = await listCostModelChanges();
+  const segments = monthSegments(selected, costChanges);
+  const usesStudio = segments.some((s) => s.model === "STUDIO");
+  const expenseRows = row
+    ? await prisma.monthlyExpense.findMany({
+        where: { monthKey: selected },
+        orderBy: [{ category: "asc" }, { createdAt: "asc" }],
+        select: { id: true, category: true, label: true, amountPkr: true, recurring: true },
+      })
+    : [];
+  const fxNum = row ? Number(row.fxRate?.toString?.() ?? 0) || 0 : 0;
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-10 space-y-6">
@@ -261,7 +280,9 @@ export default async function FinanceConfigPage({
                     subscriptions, ads and platform plans. Split between
                     departments by capacity, then charged to BDs by their
                     department allocation. Carried forward automatically when
-                    you create a new month.
+                    you create a new month.{" "}
+                    <strong>STAFF model only</strong> — under STUDIO the expense
+                    ledger below replaces this number.
                   </p>
                 </div>
 
@@ -295,6 +316,23 @@ export default async function FinanceConfigPage({
           )}
         </div>
       </div>
+
+      {row ? (
+        <ExpenseLedgerSection
+          monthKey={selected}
+          rows={expenseRows.map((e) => ({ ...e, category: String(e.category) }))}
+          locked={isFinalized}
+          fx={fxNum}
+          usesStudio={usesStudio}
+        />
+      ) : null}
+
+      <CostModelSection
+        monthKey={selected}
+        changes={costChanges}
+        currentModel={costModelAt(new Date(), costChanges)}
+        segments={segments}
+      />
 
       {/* ── Global onsite-points constants (not per-month) ── */}
       <div className="rounded-2xl border bg-card p-4 space-y-4">

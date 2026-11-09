@@ -32,6 +32,7 @@ model User {
   bdCommissionPaid          BdCommission[]           @relation("BdCommissionPaidBy")
   bdCommissionHoursOverride BdCommission[]           @relation("BdCommissionHoursOverrideBy")
   bdAdjustments             BdCommissionAdjustment[]
+  bdMonthTargets            BdMonthTarget[]          @relation("BdMonthTargetBd")
   createdBdAdjustments      BdCommissionAdjustment[] @relation("BdAdjustmentCreatedBy")
   notifications             Notification[]           @relation("NotificationRecipient")
   notificationDeliveries    NotificationDelivery[]   @relation("NotificationDeliveryRecipient")
@@ -248,6 +249,8 @@ model ProjectFinance {
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
   platformFeePercent Decimal?      @db.Decimal(5, 2)
+  /// Spent for this project only (credits, stock, licence). Subscriptions go in MonthlyExpense.
+  directCostPkr      Int?
   project            Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([projectId])
@@ -729,6 +732,60 @@ enum WorkerType {
   REMOTE_ANIMATOR
   WEB_DEVELOPMENT
   OPERATIONS
+}
+
+/// Which costing model settles BDs from a date onward.
+enum CostModel {
+  STAFF
+  STUDIO
+}
+
+enum ExpenseCategory {
+  RENT
+  BILLS
+  AI_SUBSCRIPTION
+  SALARY
+  OTHER
+}
+
+/// Dated log: the model in force on a date is the latest row with effectiveFrom <= date.
+model CostModelChange {
+  id            String    @id @default(cuid())
+  effectiveFrom DateTime  @unique
+  model         CostModel
+  note          String?
+  createdById   String?
+  createdAt     DateTime  @default(now())
+}
+
+/// Studio expense ledger. Month total feeds the STUDIO settlement.
+model MonthlyExpense {
+  id          String          @id @default(cuid())
+  monthKey    String
+  category    ExpenseCategory
+  label       String
+  amountPkr   Int
+  recurring   Boolean         @default(false)
+  note        String?
+  createdById String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@index([monthKey])
+}
+
+/// STUDIO model: each BD's monthly target in USD. Expense share = target / sum of targets.
+model BdMonthTarget {
+  id        String   @id @default(cuid())
+  monthKey  String
+  bdId      String
+  targetUsd Decimal  @db.Decimal(12, 2)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  bd        User     @relation("BdMonthTargetBd", fields: [bdId], references: [id], onDelete: Cascade)
+
+  @@unique([monthKey, bdId])
+  @@index([monthKey])
 }
 
 enum WorkType {

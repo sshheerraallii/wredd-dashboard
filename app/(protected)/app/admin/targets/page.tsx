@@ -7,6 +7,9 @@ import { getPrisma } from "@/lib/prisma";
 import { SYSTEM_BD_KEY, SYSTEM_BD_EMAIL } from "@/lib/bd-commission/constants";
 import { openMonth, saveWorkingDays, snapshotMonth } from "./actions";
 import AllocationEditor from "./_components/allocation-editor";
+import { UsdTargetsSection } from "./_components/usd-targets-section";
+import { loadUsdTargetEditor } from "@/lib/studio/targets";
+import { listCostModelChanges, monthUsesStudio } from "@/lib/studio/cost-model";
 import { computeTargets } from "@/lib/bd-targets/compute";
 import { Headline, DeptCard, BdTable, SnapshotHistory } from "@/components/bd-targets/ui";
 
@@ -127,6 +130,13 @@ export default async function BdTargetsPage({
 
   const setupMissing = departments.length < 2;
 
+  // STUDIO model: USD targets per BD.
+  const [usdTargets, costChanges] = await Promise.all([
+    loadUsdTargetEditor(selected),
+    listCostModelChanges(),
+  ]);
+  const usesStudio = monthUsesStudio(selected, costChanges);
+
   return (
     <div className="max-w-5xl mx-auto px-6 py-10 space-y-6">
       <div>
@@ -152,6 +162,8 @@ export default async function BdTargetsPage({
           Departments (by exact name or slug) to enable allocation.
         </div>
       ) : null}
+
+      <UsdTargetsSection data={usdTargets} usesStudio={usesStudio} />
 
       {/* ── Live dashboard (read-only overview) ───────────────────────── */}
       {comp.setupComplete ? (
@@ -249,7 +261,10 @@ export default async function BdTargetsPage({
 
         {/* Right: allocation editor */}
         <div className="space-y-3">
-          <div className="text-sm font-medium">Allocation — {selected}</div>
+          <div className="text-sm font-medium">
+            Allocation — {selected}{" "}
+            <span className="text-xs font-normal text-muted-foreground">(STAFF model only)</span>
+          </div>
           {departments.length === 2 && bds.length > 0 ? (
             <AllocationEditor
               monthKey={selected}

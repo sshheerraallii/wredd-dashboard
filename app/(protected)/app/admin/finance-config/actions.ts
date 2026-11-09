@@ -13,6 +13,7 @@ import {
   setOnsiteOverheadSettings,
 } from "@/lib/onsite-points/overhead-settings";
 import { recomputeBdSettlements } from "@/lib/bd-settlement/compute";
+import { copyRecurringInto } from "@/lib/studio/expenses";
 
 const prisma = getPrisma();
 
@@ -71,6 +72,11 @@ export async function createMonth(formData: FormData) {
     select: { overheadPoolPkr: true },
   });
 
+  const alreadyExists = await prisma.monthlyFinanceConfig.findUnique({
+    where: { monthKey },
+    select: { id: true },
+  });
+
   await prisma.monthlyFinanceConfig.upsert({
     where: { monthKey },
     create: {
@@ -84,6 +90,9 @@ export async function createMonth(formData: FormData) {
     },
     update: {},
   });
+
+  // New month: bring the recurring expense lines (rent, subscriptions) along.
+  if (!alreadyExists) await copyRecurringInto(monthKey);
 
   redirect(`/app/admin/finance-config?monthKey=${encodeURIComponent(monthKey)}`);
 }

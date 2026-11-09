@@ -14,6 +14,7 @@ import { OnsiteFinalizeCard } from "./_components/onsite-finalize-card";
 import { getProjectEstimate } from "@/lib/onsite-points/aggregate";
 import { WatchToggle } from "./_components/watch-toggle";
 import { DeliverDialog } from "./_components/deliver-dialog";
+import { saveDirectCost } from "./actions/direct-cost";
 import { markSeenForUser } from "@/lib/actions/mark-seen";
 
 const prisma = getPrisma();
@@ -267,6 +268,7 @@ export default async function ProjectPage({ params }: { params: { id: string } }
           platformFeePercent: true,
           platformFeeUsd: true, // ✅ add this
           allowedHours: true,
+          directCostPkr: true,
         },
       },
     },
@@ -608,6 +610,32 @@ deadlineHours={project.deadlineHours ?? null}
                 </div>
               </>
             )}
+
+            {!(project as any).isSample ? (
+              <div className="flex justify-between gap-4 items-center">
+                <span className="text-muted-foreground">Direct cost (PKR)</span>
+                {canManage ? (
+                  <form action={saveDirectCost} className="flex items-center gap-2">
+                    <input type="hidden" name="projectId" value={project.id} />
+                    <input
+                      name="directCostPkr"
+                      inputMode="numeric"
+                      defaultValue={(project as any).finance?.directCostPkr ?? ""}
+                      placeholder="optional"
+                      title="Spent for this project only: credit top-up, stock clip, music licence. Subscriptions go in the monthly expense ledger."
+                      className="h-8 w-28 rounded-md border bg-background px-2 text-right text-sm"
+                    />
+                    <button className="h-8 rounded-md border px-2 text-xs hover:bg-muted">Save</button>
+                  </form>
+                ) : (
+                  <span className="font-medium">
+                    {(project as any).finance?.directCostPkr != null
+                      ? Number((project as any).finance.directCostPkr).toLocaleString()
+                      : "—"}
+                  </span>
+                )}
+              </div>
+            ) : null}
 
             {(project as any).effortHours != null ? (
               <div className="flex justify-between gap-4">
