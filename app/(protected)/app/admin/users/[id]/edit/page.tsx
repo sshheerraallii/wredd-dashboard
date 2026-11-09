@@ -1,8 +1,12 @@
 import Link from "next/link";
 import { getPrisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/rbac";
-import { requireRole } from "@/lib/guards";
-import { updateUserDepartments, updateUserPerformance } from "../actions";
+import { requireRole, requireUser } from "@/lib/guards";
+import {
+  updateUserDeliveryPermission,
+  updateUserDepartments,
+  updateUserPerformance,
+} from "../actions";
 import { UserDangerZone } from "./_components/user-danger-zone";
 import { OnsiteRateField } from "./_components/onsite-rate-field";
 import {
@@ -25,6 +29,8 @@ export default async function UserEditPage({
   searchParams?: { ok?: string; err?: string };
 }) {
   await requireAdmin();
+  const actor = await requireUser();
+  const actorIsSuperAdmin = actor?.role === "SUPER_ADMIN";
 
   const userId = params.id;
 
@@ -41,6 +47,7 @@ export default async function UserEditPage({
      // performance fields
       targetMonthlyPoints: true,
       onsiteHourRatePkr: true,
+      canDeliverUnassigned: true,
       joinedAt: true,
       createdAt: true,
     },
@@ -80,6 +87,12 @@ export default async function UserEditPage({
     "use server";
     await requireRole(["SUPER_ADMIN", "MANAGER"]);
     return updateUserDepartments(userId, formData);
+  }
+
+  async function onSaveDeliveryPermission(formData: FormData) {
+    "use server";
+    await requireRole(["SUPER_ADMIN"]);
+    return updateUserDeliveryPermission(userId, formData);
   }
 
   async function onSavePerformance(formData: FormData) {
@@ -156,6 +169,32 @@ export default async function UserEditPage({
           Save Departments
         </button>
       </form>
+
+      {user.role === "BUSINESS_DEVELOPER" || user.role === "MANAGER" ? (
+        <form action={onSaveDeliveryPermission} className="space-y-4">
+          <div className="border rounded-lg p-4 space-y-2">
+            <h2 className="font-medium">Delivery permission</h2>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                name="canDeliverUnassigned"
+                defaultChecked={user.canDeliverUnassigned}
+                disabled={!actorIsSuperAdmin}
+              />
+              Can deliver projects without being assigned
+            </label>
+            <p className="text-xs text-muted-foreground">
+              Deliveries show this person&apos;s name. A project delivered with no worker on it becomes
+              work type STUDIO (no worker payout). Only Super Admin can change this.
+            </p>
+          </div>
+          {actorIsSuperAdmin ? (
+            <button className="px-4 py-2 rounded-md bg-primary text-primary-foreground">
+              Save Delivery Permission
+            </button>
+          ) : null}
+        </form>
+      ) : null}
 
       {/* Performance Target (before DangerZone) */}
       <form action={onSavePerformance} className="space-y-4">

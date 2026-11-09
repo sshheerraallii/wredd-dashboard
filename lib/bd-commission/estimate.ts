@@ -67,6 +67,11 @@ export async function estimateActiveProfitPkr(args: {
     return netPkr - overhead;
   }
 
+  // In-house: no worker cost. Studio expenses are charged at monthly settlement.
+  if (finance.workType === "STUDIO") {
+    return netPkr;
+  }
+
   if (finance.workType === "REMOTE") {
     const remoteOverhead = toNum(config.remoteOverheadFixedPkr);
     const remoteWorkers = await estimateRemoteWorkerPayoutPkr(projectId);

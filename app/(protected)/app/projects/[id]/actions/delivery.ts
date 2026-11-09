@@ -20,7 +20,7 @@ function isWorker(role: Role | undefined) {
   return role === "REMOTE_WORKER" || role === "ONSITE_EMPLOYEE";
 }
 
-function backWithError(projectId: string, msg: string) {
+function backWithError(projectId: string, msg: string): never {
   redirect(`/app/projects/${projectId}?err=${encodeURIComponent(msg)}`);
 }
 
@@ -41,7 +41,13 @@ const DeliverySchema = z.object({
       }
     }, "Must be a valid Google Drive/Docs https link"),
   note: z.string().trim().min(3, "Delivery notes are required").max(5000, "Too long"),
+  effortHours: z
+    .union([z.literal(""), z.coerce.number().positive("Effort hours must be above 0").max(500, "Effort hours look too high")])
+    .optional(),
 });
+
+// Statuses an operator (Super Admin / flagged user) may deliver from.
+const OPERATOR_DELIVERABLE = ["UNASSIGNED", "IN_PROGRESS", "REVISION"] as const;
 
 function secondsBetween(later: Date, earlier: Date) {
   const ms = later.getTime() - earlier.getTime();
@@ -53,6 +59,7 @@ export async function deliverProject(formData: FormData) {
     projectId: formData.get("projectId"),
     driveUrl: formData.get("driveUrl"),
     note: formData.get("note"),
+    effortHours: (formData.get("effortHours") as string | null) ?? "",
   });
 
   if (!parsed.success) {
@@ -61,6 +68,8 @@ export async function deliverProject(formData: FormData) {
   }
 
   const { projectId, driveUrl, note } = parsed.data;
+  const effortHours =
+    typeof parsed.data.effortHours === "number" ? parsed.data.effortHours : null;
 
   const session = await readSession();
   if (!session?.user) redirect("/login");
@@ -68,7 +77,19 @@ export async function deliverProject(formData: FormData) {
   const role = session.user.role as Role | undefined;
   const userId = session.user.id;
 
-  if (!isWorker(role)) backWithError(projectId, "Only workers can deliver projects.");
+  // Operators deliver without an assignment: Super Admin always, others by flag.
+  let isOperator = role === "SUPER_ADMIN";
+  if (!isOperator && !isWorker(role)) {
+    const me = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { canDeliverUnassigned: true, archivedAt: true },
+    });
+    isOperator = !!me?.canDeliverUnassigned && !me.archivedAt;
+  }
+
+  if (!isWorker(role) && !isOperator) {
+    backWithError(projectId, "You do not have permission to deliver projects.");
+  }
 
   const project = await prisma.project.findUnique({
     where: { id: projectId },
@@ -79,6 +100,8 @@ export async function deliverProject(formData: FormData) {
       timerRunning: true,
       timerLastResumedAt: true,
       timerAccumulatedSeconds: true,
+      firstCompletedAt: true,
+      effortHours: true,
       assignments: {
         where: { unassignedAt: null },
         select: { id: true, userId: true },
@@ -89,7 +112,15 @@ export async function deliverProject(formData: FormData) {
   if (!project) backWithError(projectId, "Project not found.");
 
   const isAssigned = project.assignments.some((a) => a.userId === userId);
-  if (!isAssigned) backWithError(projectId, "You are not assigned to this project.");
+  if (isWorker(role)) {
+    if (!isAssigned) backWithError(projectId, "You are not assigned to this project.");
+  } else if (!(OPERATOR_DELIVERABLE as readonly string[]).includes(project.status)) {
+    backWithError(projectId, `Cannot deliver a project that is ${project.status}.`);
+  }
+
+  // No worker on it and never completed => produced in-house.
+  const markStudio =
+    !isWorker(role) && project.assignments.length === 0 && !project.firstCompletedAt;
 
   const now = new Date();
 
@@ -116,7 +147,7 @@ export async function deliverProject(formData: FormData) {
       timerLastResumedAt = null;
     }
 
-    // 3) Update status to DELIVERED
+    // 3) Update status to DELIVERED (effort hours add up across deliveries)
     await tx.project.update({
       where: { id: projectId },
       data: {
@@ -125,8 +156,19 @@ export async function deliverProject(formData: FormData) {
         timerRunning,
         timerLastResumedAt,
         timerAccumulatedSeconds,
+        ...(effortHours != null
+          ? { effortHours: (project.effortHours ?? 0) + effortHours }
+          : {}),
       },
     });
+
+    // 3b) In-house delivery: no worker payout, no floor hours
+    if (markStudio) {
+      await tx.projectFinance.updateMany({
+        where: { projectId },
+        data: { workType: "STUDIO", allowedHours: null },
+      });
+    }
 
     // 4) Activity log
     await tx.projectActivity.create({
@@ -134,7 +176,13 @@ export async function deliverProject(formData: FormData) {
         projectId,
         actorId: userId,
         action: "DELIVERED",
-        data: { driveUrl, noteLength: note.length },
+        data: {
+          driveUrl,
+          noteLength: note.length,
+          effortHours,
+          deliveredAs: isWorker(role) ? "WORKER" : "OPERATOR",
+          studio: markStudio,
+        },
       },
     });
   });

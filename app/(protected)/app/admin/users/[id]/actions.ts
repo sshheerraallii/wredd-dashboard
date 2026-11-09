@@ -14,7 +14,7 @@ import {
 
 const prisma = getPrisma();
 
-function backWithError(userId: string, msg: string) {
+function backWithError(userId: string, msg: string): never {
   redirect(`/app/admin/users/${userId}/edit?err=${encodeURIComponent(msg)}`);
 }
 
@@ -94,6 +94,28 @@ export async function updateUserPerformance(userId: string, formData: FormData) 
   backWithOk(userId);
 }
 
+
+/** Super Admin only: let a BD/Manager deliver projects without being assigned. */
+export async function updateUserDeliveryPermission(userId: string, formData: FormData) {
+  await requireRole(["SUPER_ADMIN"]);
+
+  const target = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, role: true },
+  });
+  if (!target) backWithError(userId, "User not found");
+  if (target.role !== "BUSINESS_DEVELOPER" && target.role !== "MANAGER") {
+    backWithError(userId, "Only BDs and Managers can be given this permission.");
+  }
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: { canDeliverUnassigned: formData.get("canDeliverUnassigned") === "on" },
+  });
+
+  revalidatePath(`/app/admin/users/${userId}/edit`);
+  backWithOk(userId);
+}
 
 export async function updateUserDepartments(userId: string, formData: FormData) {
   const actor = await requireRole(["SUPER_ADMIN", "MANAGER"]);

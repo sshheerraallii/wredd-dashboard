@@ -777,7 +777,9 @@ export default async function AdminBdCommissionPage({ searchParams }: { searchPa
                 const workType = r.finance?.workType;
                const effort = workType === "ONSITE"
                   ? fmtOnsiteEffort(r.finance?.allowedHours, null)
-                  : "Remote overhead (fixed)";
+                  : workType === "STUDIO"
+                    ? "Studio (in-house)"
+                    : "Remote overhead (fixed)";
 
                 const { pct, feeUsd } = feeUsdFrom(
                   r.finance?.priceUsd,

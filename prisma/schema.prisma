@@ -25,6 +25,8 @@ model User {
   joinedAt                  DateTime                 @default(now())
   bdCommissionRate          Decimal?                 @db.Decimal(5, 4)
   onsiteHourRatePkr         Int?
+  /// May deliver any project without being assigned (Super Admin always can).
+  canDeliverUnassigned      Boolean                  @default(false)
   bdCommissions             BdCommission[]           @relation("BdCommissionBd")
   bdCommissionExceptionPaid BdCommission[]           @relation("BdCommissionExceptionPaidBy")
   bdCommissionPaid          BdCommission[]           @relation("BdCommissionPaidBy")
@@ -206,6 +208,8 @@ model Project {
   ///    * ---- BD ownership (Mini-Step 3) ----
   bdOwnerId                        String?
   isSample                         Boolean                 @default(false)
+  /// Hours spent, summed across deliveries. Informational only — never used in money maths.
+  effortHours                      Float?
   bdCommissions                    BdCommission[]          @relation("BdCommissionProject")
   onsiteCredits                    OnsitePointCredit[]
   onsiteRating                     OnsiteProjectRating?
@@ -730,6 +734,8 @@ enum WorkerType {
 enum WorkType {
   ONSITE
   REMOTE
+  /// Produced in-house without a worker assignment (delivered by an owner/operator).
+  STUDIO
 }
 
 enum ProjectPortal {

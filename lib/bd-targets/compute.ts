@@ -232,7 +232,8 @@ export async function computeTargets(monthKey: string, now: Date = new Date()): 
     if (!p.departmentId || !p.finance) continue;
     const price = num(p.finance.priceUsd);
     if (price <= 0) continue;
-    const isOnsite = p.finance.workType === "ONSITE";
+    // In-house (STUDIO) work counts toward targets like onsite work.
+    const isOnsite = p.finance.workType === "ONSITE" || p.finance.workType === "STUDIO";
     const isUnassigned = p.status === "UNASSIGNED";
     const inMonth = p.firstCompletedAt != null && p.firstCompletedAt >= start && p.firstCompletedAt < end;
 

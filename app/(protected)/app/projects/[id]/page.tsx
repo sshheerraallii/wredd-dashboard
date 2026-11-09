@@ -156,6 +156,7 @@ export default async function ProjectPage({ params }: { params: { id: string } }
 
       status: true,
       isSample: true,
+      effortHours: true,
       deadlineHours: true,
 
       timerRunning: true,
@@ -286,9 +287,21 @@ export default async function ProjectPage({ params }: { params: { id: string } }
 
   const canPostChat = isAdminLike || (isWorkerRole && isAssigned);
 
+  // Operators (Super Admin always; others by flag) deliver without an assignment.
+  let isOperator = role === "SUPER_ADMIN";
+  if (!isOperator && !isWorkerRole) {
+    const me = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { canDeliverUnassigned: true },
+    });
+    isOperator = !!me?.canDeliverUnassigned;
+  }
+
   // ✅ Delivery gating (Step 2B)
   const canDeliver =
-    isWorkerRole && isAssigned && (project.status === "IN_PROGRESS" || project.status === "REVISION");
+    (isWorkerRole && isAssigned && (project.status === "IN_PROGRESS" || project.status === "REVISION")) ||
+    (isOperator &&
+      (project.status === "UNASSIGNED" || project.status === "IN_PROGRESS" || project.status === "REVISION"));
 
   // ✅ Workers should NOT be able to set DELIVERED directly
   const showStatusControls = isAdminLike;
@@ -595,6 +608,15 @@ deadlineHours={project.deadlineHours ?? null}
                 </div>
               </>
             )}
+
+            {(project as any).effortHours != null ? (
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Effort hours</span>
+                <span className="font-medium">
+                  {Number((project as any).effortHours).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                </span>
+              </div>
+            ) : null}
 
             {(project as any).finance?.workType === "ONSITE" ? (
               <div className="flex justify-between gap-4">

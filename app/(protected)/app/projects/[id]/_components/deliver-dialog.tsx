@@ -39,12 +39,14 @@ export function DeliverDialog({
 
   const [driveUrl, setDriveUrl] = React.useState("");
   const [note, setNote] = React.useState("");
+  const [effortHours, setEffortHours] = React.useState("");
   const [err, setErr] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
 
   function reset() {
     setDriveUrl("");
     setNote("");
+    setEffortHours("");
     setErr(null);
     setSaving(false);
   }
@@ -58,6 +60,12 @@ export function DeliverDialog({
     if (!n) return "Delivery notes are required.";
     if (n.length < 3) return "Delivery notes are too short.";
     if (n.length > 5000) return "Delivery notes are too long.";
+    const h = effortHours.trim();
+    if (h) {
+      const v = Number(h);
+      if (!Number.isFinite(v) || v <= 0) return "Effort hours must be a number above 0.";
+      if (v > 500) return "Effort hours look too high.";
+    }
     return null;
   }
 
@@ -78,6 +86,7 @@ export function DeliverDialog({
       fd.set("projectId", projectId);
       fd.set("driveUrl", driveUrl.trim());
       fd.set("note", note.trim());
+      fd.set("effortHours", effortHours.trim());
 
       // Server action will redirect on success / failure.
       // In case it doesn't (edge), we refresh.
@@ -137,6 +146,22 @@ export function DeliverDialog({
               placeholder="What did you deliver? What should BD/Manager review?"
               rows={6}
             />
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Hours spent (optional)</label>
+            <Input
+              type="number"
+              inputMode="decimal"
+              min="0"
+              step="0.25"
+              value={effortHours}
+              onChange={(e) => setEffortHours(e.target.value)}
+              placeholder="e.g. 6"
+            />
+            <div className="text-xs text-muted-foreground">
+              Hours spent on this delivery. Adds to the project total. Info only — does not affect pay or commission.
+            </div>
           </div>
 
           {err ? (
