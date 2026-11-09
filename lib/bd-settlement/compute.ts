@@ -6,6 +6,8 @@ import {
   monthBounds,
   type CostBaseResult,
 } from "./cost-base";
+import { listCostModelChanges, monthSegments, type MonthSegment } from "@/lib/studio/cost-model";
+import { computeStudioSegment } from "./studio";
 
 /**
  * Monthly BD settlement — ABSORPTION COSTING.
@@ -35,10 +37,26 @@ function db(client?: Db): Db {
   return client ?? (getPrisma() as unknown as Db);
 }
 
+export type SettlementModel = "STAFF" | "STUDIO" | "MIXED";
+
 export type BdSettlement = {
   bdId: string;
   bdName: string;
   bdRate: number;
+  model: SettlementModel;
+  /** STUDIO: per-project direct costs (credits, stock, licences). Always 0 under STAFF. */
+  directCostPkr: number;
+  /** STUDIO: expense share charged so far (part of costBasePkr). */
+  expenseSharePkr: number;
+  /** STUDIO: whole expense share for the STUDIO part of the month. */
+  expenseShareFullPkr: number;
+  /** STUDIO: target for the STUDIO part of the month, and the pace-to-date slice of it. */
+  targetUsd: number;
+  targetToDateUsd: number;
+  /** Gross USD of the projects counted (all models). */
+  achievedUsd: number;
+  /** STUDIO: PKR of expense per target dollar (company-wide). */
+  kPkrPerUsd: number;
   revenuePkr: number;
   remotePayoutPkr: number;
   costSalariesPkr: number;
@@ -60,6 +78,12 @@ export type BdSettlement = {
 
 export type SettlementProject = {
   projectId: string;
+  /** Which model costed this project (by its first-completion date). */
+  model: "STAFF" | "STUDIO";
+  priceUsd: number;
+  directCostPkr: number;
+  /** Cost charged to this line: STAFF hours x BD hour rate, STUDIO price x k. */
+  chargePkr: number;
   title: string;
   workType: string;
   netPkr: number;
@@ -76,6 +100,10 @@ export type SettlementProject = {
 
 export type SettlementRun = {
   monthKey: string;
+  model: SettlementModel;
+  segments: MonthSegment[];
+  /** Present when any part of the month is STUDIO. */
+  studio: { expensesPkr: number; totalTargetUsd: number; kPkrPerUsd: number } | null;
   costBase: CostBaseResult;
   settlements: BdSettlement[];
   warnings: string[];
@@ -92,12 +120,15 @@ function toNum(v: unknown): number {
 }
 
 /**
- * Compute (but do not persist) settlements for a month.
+ * STAFF model (absorption costing). With `window`, only projects first
+ * completed inside it count and the cost base is charged for the window's
+ * working days — used when a month crosses a cost-model change.
  * Throws when allocations are missing — never silently inherits another month.
  */
-export async function computeBdSettlements(
+export async function computeStaffSettlements(
   monthKey: string,
-  client?: Db
+  client?: Db,
+  window?: { from: Date; to: Date }
 ): Promise<SettlementRun> {
   const c = db(client);
   const warnings: string[] = [];
@@ -123,6 +154,24 @@ export async function computeBdSettlements(
   const proration = isCurrentMonth
     ? Math.min(1, elapsedWorkDays / workDaysInMonth)
     : 1;
+
+  // Segment of a month (cost-model change inside it). Without a window both
+  // factors reduce to the whole-month behaviour above.
+  const winFrom = window?.from ?? start;
+  const winTo = window?.to ?? end;
+  const segFullFactor = window ? countWeekdays(winFrom, winTo) / workDaysInMonth : 1;
+  const nowCutoff = isCurrentMonth
+    ? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1))
+    : end;
+  const segElapsedTo = winTo < nowCutoff ? winTo : nowCutoff;
+  const costFactor = window
+    ? segElapsedTo > winFrom
+      ? countWeekdays(winFrom, segElapsedTo) / workDaysInMonth
+      : 0
+    : proration;
+  const windowWhere = window
+    ? { project: { firstCompletedAt: { gte: winFrom, lt: winTo } } }
+    : {};
 
   const allocations = await c.bdDepartmentAllocation.findMany({
     where: { monthKey },
@@ -231,10 +280,12 @@ export async function computeBdSettlements(
         completedMonthKey: monthKey,
         paidAt: null,
         exceptionPaidAt: null,
+        ...windowWhere,
       },
       select: {
         id: true,
         projectId: true,
+        priceUsd: true,
         netPkr: true,
         workerPayoutPkr: true,
         allowedHours: true,
@@ -250,6 +301,7 @@ export async function computeBdSettlements(
         bdId,
         completedMonthKey: monthKey,
         OR: [{ paidAt: { not: null } }, { exceptionPaidAt: { not: null } }],
+        ...windowWhere,
       },
     });
 
@@ -266,8 +318,10 @@ export async function computeBdSettlements(
       String(r.workType) === "ONSITE" ? r.hoursOverride ?? r.allowedHours ?? 0 : 0;
     const usedHours = rows.reduce((a, r) => a + onsiteHours(r), 0);
 
-    const costBaseFullPkr = Math.round(costSalaries + costOverhead);
-    const costBasePkr = Math.round(costBaseFullPkr * proration);
+    const monthCostFull = costSalaries + costOverhead;
+    const bdHourRate = capacityHours > 0 ? monthCostFull / capacityHours : 0;
+    const costBaseFullPkr = Math.round(monthCostFull * segFullFactor);
+    const costBasePkr = Math.round(monthCostFull * costFactor);
     const profitPkr = Math.round(revenuePkr - remotePayoutPkr - costBasePkr);
     const payoutPkr = Math.max(0, Math.round(profitPkr * bd.bdRate));
 
@@ -277,19 +331,31 @@ export async function computeBdSettlements(
       bdRate: bd.bdRate,
       revenuePkr: Math.round(revenuePkr),
       remotePayoutPkr: Math.round(remotePayoutPkr),
-      costSalariesPkr: Math.round(costSalaries * proration),
-      costOverheadPkr: Math.round(costOverhead * proration),
+      model: "STAFF",
+      directCostPkr: 0,
+      expenseSharePkr: 0,
+      expenseShareFullPkr: 0,
+      targetUsd: 0,
+      targetToDateUsd: 0,
+      achievedUsd: rows.reduce((a, r) => a + toNum(r.priceUsd), 0),
+      kPkrPerUsd: 0,
+      costSalariesPkr: Math.round(costSalaries * costFactor),
+      costOverheadPkr: Math.round(costOverhead * costFactor),
       costBasePkr,
       costBaseFullPkr,
       profitPkr,
       payoutPkr,
       projectCount: rows.length,
       excludedPaidCount,
-      capacityHours: Number(capacityHours.toFixed(2)),
+      capacityHours: Number((capacityHours * segFullFactor).toFixed(2)),
       usedHours,
       allocations: allocOut.sort((a, b) => a.name.localeCompare(b.name)),
       projects: rows.map((r) => ({
         projectId: r.projectId,
+        model: "STAFF" as const,
+        priceUsd: toNum(r.priceUsd),
+        directCostPkr: 0,
+        chargePkr: onsiteHours(r) * bdHourRate,
         title: r.project?.title ?? r.projectId,
         workType: String(r.workType),
         netPkr: toNum(r.netPkr),
@@ -307,9 +373,122 @@ export async function computeBdSettlements(
 
   return {
     monthKey,
+    model: "STAFF",
+    segments: [{ model: "STAFF", from: winFrom, to: winTo }],
+    studio: null,
     costBase,
     settlements,
     warnings,
+    elapsedWorkDays,
+    workDaysInMonth,
+    prorationPct: Number((proration * 100).toFixed(2)),
+    isCurrentMonth,
+  };
+}
+
+function emptyCostBase(monthKey: string): CostBaseResult {
+  const { start, end } = monthBounds(monthKey);
+  return {
+    monthKey,
+    poolPkr: 0,
+    weekdaysInMonth: countWeekdays(start, end) || 1,
+    departments: [],
+    totals: { fte: 0, sellableHours: 0, salariesPkr: 0, poolPkr: 0, totalPkr: 0 },
+    orphans: [],
+  };
+}
+
+/** Add `b` into `a` (same BD, different segments of one month). */
+function mergeInto(a: BdSettlement, b: BdSettlement) {
+  if (a.model !== b.model) a.model = "MIXED";
+  const keys = [
+    "revenuePkr", "remotePayoutPkr", "directCostPkr", "costSalariesPkr", "costOverheadPkr",
+    "expenseSharePkr", "expenseShareFullPkr", "costBasePkr", "costBaseFullPkr", "profitPkr",
+    "projectCount", "excludedPaidCount", "capacityHours", "usedHours", "targetUsd",
+    "targetToDateUsd", "achievedUsd",
+  ] as const;
+  for (const k of keys) (a as any)[k] = (a as any)[k] + (b as any)[k];
+  a.kPkrPerUsd = Math.max(a.kPkrPerUsd, b.kPkrPerUsd);
+  a.allocations = [...a.allocations, ...b.allocations];
+  a.projects = [...a.projects, ...b.projects];
+}
+
+/**
+ * Compute (but do not persist) settlements for a month, by cost model.
+ *
+ * A month entirely on STAFF goes through computeStaffSettlements unchanged.
+ * Otherwise the month is split at each cost-model change; each part is
+ * settled on its own model (projects by first-completion date, costs by
+ * working days) and the parts are added up per BD. The payout floor is
+ * applied once, to the merged month.
+ */
+export async function computeBdSettlements(
+  monthKey: string,
+  client?: Db
+): Promise<SettlementRun> {
+  const c = db(client);
+  const segments = monthSegments(monthKey, await listCostModelChanges());
+
+  if (segments.length === 1 && segments[0].model === "STAFF") {
+    return computeStaffSettlements(monthKey, c);
+  }
+
+  const { start, end } = monthBounds(monthKey);
+  const now = new Date();
+  const isCurrentMonth = now >= start && now < end;
+  const workDaysInMonth = countWeekdays(start, end) || 1;
+  const elapsedWorkDays = isCurrentMonth
+    ? countWeekdays(
+        start,
+        new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1))
+      )
+    : workDaysInMonth;
+  const proration = isCurrentMonth ? Math.min(1, elapsedWorkDays / workDaysInMonth) : 1;
+
+  const warnings: string[] = [];
+  const byBd = new Map<string, BdSettlement>();
+  let costBase: CostBaseResult | null = null;
+  let studio: SettlementRun["studio"] = null;
+
+  for (const seg of segments) {
+    const window = { from: seg.from, to: seg.to };
+    let parts: BdSettlement[];
+    if (seg.model === "STAFF") {
+      const r = await computeStaffSettlements(monthKey, c, window);
+      costBase = r.costBase;
+      warnings.push(...r.warnings);
+      parts = r.settlements;
+    } else {
+      const r = await computeStudioSegment(monthKey, c, window, now);
+      studio = {
+        expensesPkr: r.expensesPkr,
+        totalTargetUsd: r.totalTargetUsd,
+        kPkrPerUsd: r.kPkrPerUsd,
+      };
+      warnings.push(...r.warnings);
+      parts = r.settlements;
+    }
+    for (const p of parts) {
+      const cur = byBd.get(p.bdId);
+      if (cur) mergeInto(cur, p);
+      else byBd.set(p.bdId, { ...p, projects: [...p.projects], allocations: [...p.allocations] });
+    }
+  }
+
+  const settlements = Array.from(byBd.values()).map((s) => ({
+    ...s,
+    payoutPkr: Math.max(0, Math.round(s.profitPkr * s.bdRate)),
+  }));
+  settlements.sort((a, b) => a.bdName.localeCompare(b.bdName));
+
+  return {
+    monthKey,
+    model: segments.length === 1 ? segments[0].model : "MIXED",
+    segments,
+    studio,
+    costBase: costBase ?? emptyCostBase(monthKey),
+    settlements,
+    warnings: Array.from(new Set(warnings)),
     elapsedWorkDays,
     workDaysInMonth,
     prorationPct: Number((proration * 100).toFixed(2)),
@@ -343,6 +522,11 @@ export async function recomputeBdSettlements(
       excludedPaidCount: s.excludedPaidCount,
       capacityHours: s.capacityHours.toFixed(2),
       usedHours: s.usedHours.toFixed(2),
+      costModel: s.model,
+      directCostPkr: s.directCostPkr.toFixed(2),
+      expenseSharePkr: s.expenseSharePkr.toFixed(2),
+      targetUsd: s.targetUsd.toFixed(2),
+      achievedUsd: s.achievedUsd.toFixed(2),
       computedAt: new Date(),
     };
 

@@ -2,6 +2,8 @@
 import { getPrisma } from "@/lib/prisma";
 import { SYSTEM_BD_KEY, SYSTEM_BD_EMAIL } from "@/lib/bd-commission/constants";
 import { DOLLARS_PER_POINT, DEPT_DEFS, ACTIVE_STATUSES, DEFAULT_WORKING_DAYS, type DeptKey } from "./constants";
+import { listCostModelChanges, monthUsesStudio } from "@/lib/studio/cost-model";
+import { computeStudioTargets } from "@/lib/studio/targets-overview";
 
 const prisma = getPrisma();
 
@@ -71,6 +73,8 @@ export type DeptResult = {
   workingDaysAssumed: boolean;
   buckets: Buckets;
   signals: SignalSet;
+  /** Header basis, e.g. "BD targets (USD)". STAFF cards derive it from points. */
+  basisLabel?: string;
 };
 
 export type BdDeptSlice = {
@@ -81,6 +85,7 @@ export type BdDeptSlice = {
   targetUsd: number;
   buckets: Buckets;
   signals: SignalSet;
+  basisLabel?: string;
 };
 
 export type BdResult = {
@@ -95,6 +100,7 @@ export type BdResult = {
 
 export type TargetsComputation = {
   monthKey: string;
+  model?: "STAFF" | "STUDIO";
   fx: number;
   fxMonthKey: string | null;
   fxAssumed: boolean;
@@ -125,6 +131,11 @@ function buildSignals(targetUsd: number, b: Buckets, workingDays: number, daysRe
 }
 
 export async function computeTargets(monthKey: string, now: Date = new Date()): Promise<TargetsComputation> {
+  // Any part of the month on the STUDIO model -> BD USD targets, not floor capacity.
+  if (monthUsesStudio(monthKey, await listCostModelChanges())) {
+    return computeStudioTargets(monthKey, now, { monthBoundsUTC, elapsedWorkingDays, resolveFx, buildSignals });
+  }
+
   const { start, end } = monthBoundsUTC(monthKey);
   const { fx, fxMonthKey, assumed: fxAssumed } = await resolveFx(monthKey);
 

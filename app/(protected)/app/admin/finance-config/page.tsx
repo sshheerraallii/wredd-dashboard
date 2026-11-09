@@ -65,7 +65,9 @@ export default async function FinanceConfigPage({
   const overhead = await getOnsiteOverheadSettings();
   const sellableHours = sellableHoursPerMonth(overhead);
 
-  const selected = searchParams.monthKey ?? all[0]?.monthKey ?? nowMonthKeyUTC();
+  // Default to the current month, not the latest existing one — otherwise a new
+  // month's FX and expenses silently land in the previous month.
+  const selected = searchParams.monthKey ?? nowMonthKeyUTC();
   const row = all.find((x) => x.monthKey === selected) ?? null;
 
   const err = searchParams.err ? decodeURIComponent(searchParams.err) : null;

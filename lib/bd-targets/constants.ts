@@ -4,10 +4,11 @@
 export const DOLLARS_PER_POINT = 6 as const;
 
 // Hardcoded department <-> onsite worker-type mapping (matches seed naming).
-export type DeptKey = "animations" | "video-editing";
+/** "all" = the single STUDIO-model bucket (BD USD targets, every department). */
+export type DeptKey = "animations" | "video-editing" | "all";
 
 export const DEPT_DEFS: {
-  key: DeptKey;
+  key: Exclude<DeptKey, "all">;
   name: string;
   altSlug: string;
   workerType: "ONSITE_ANIMATOR" | "ONSITE_VIDEO_EDITOR";

@@ -70,7 +70,7 @@ export function DeptCard({ dept, fx }: { dept: DeptResult; fx: number }) {
       <div className="flex items-center justify-between">
         <h3 className="font-medium">{dept.name}</h3>
         <span className="text-[11px] text-muted-foreground">
-          {dept.capacityPoints} pts × $6
+          {dept.basisLabel ?? `${dept.capacityPoints} pts × $6`}
           {dept.workingDaysAssumed ? " · days≈25" : ` · ${dept.workingDays}d`}
         </span>
       </div>
@@ -191,7 +191,9 @@ export function BdDeptCard({ slice, fx }: { slice: BdResult["perDept"][number]; 
     <div className="rounded-2xl border bg-card p-4 space-y-3">
       <div className="flex items-center justify-between">
         <h3 className="font-medium">{slice.name}</h3>
-        <span className="text-[11px] text-muted-foreground">your share {slice.allocationPct}%</span>
+        <span className="text-[11px] text-muted-foreground">
+          {slice.basisLabel ? `${slice.allocationPct}% of all targets` : `your share ${slice.allocationPct}%`}
+        </span>
       </div>
       <div className="flex items-baseline justify-between">
         <span className="text-xs text-muted-foreground">Your target</span>

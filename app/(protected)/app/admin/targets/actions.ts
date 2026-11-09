@@ -137,6 +137,9 @@ export async function snapshotMonth(formData: FormData) {
   const monthKey = mk.data as string;
 
   const comp = await computeTargets(monthKey);
+  if (comp.model === "STUDIO") {
+    backErr(monthKey, "Snapshots are for STAFF months. STUDIO months are settled from BD targets — see Settlement.");
+  }
   const rows = comp.departments.filter((d) => d.deptId);
   if (rows.length === 0) backErr(monthKey, "No departments to snapshot. Set up Animations and Video Editing first.");
 

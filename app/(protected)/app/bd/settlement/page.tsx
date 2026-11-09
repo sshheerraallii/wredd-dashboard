@@ -26,6 +26,8 @@ import {
   attributeSettlement,
   type Attribution,
 } from "@/lib/bd-settlement/attribution";
+import { attributeStudioSettlement } from "@/lib/bd-settlement/attribution-studio";
+import { StudioSettlementCard } from "./_components/studio-card";
 
 function fmt(n: number) {
   return Math.round(n).toLocaleString("en-PK");
@@ -53,7 +55,7 @@ function shiftMonth(monthKey: string, delta: number) {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
-type PipelineRow = { id: string; title: string; status: string; hours: number };
+type PipelineRow = { id: string; title: string; status: string; hours: number; usd: number };
 
 const STATUS_LABEL: Record<string, string> = {
   UNASSIGNED: "Unassigned",
@@ -121,7 +123,7 @@ export default async function BdSettlementPage({
         title: true,
         status: true,
         bdOwnerId: true,
-        finance: { select: { workType: true, allowedHours: true } },
+        finance: { select: { workType: true, allowedHours: true, priceUsd: true } },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -136,6 +138,7 @@ export default async function BdSettlementPage({
           String(p.finance?.workType) === "ONSITE"
             ? p.finance?.allowedHours ?? 0
             : 0,
+        usd: Number(p.finance?.priceUsd?.toString?.() ?? 0) || 0,
       });
       pipelineByBd.set(p.bdOwnerId, list);
     }
@@ -207,12 +210,27 @@ export default async function BdSettlementPage({
       {visible.length === 0 && !error ? (
         <div className="rounded-2xl border p-4 text-sm text-muted-foreground">
           No settlement for {monthKey}.
-          {isAdmin ? " Check that department allocations exist for this month." : ""}
+          {isAdmin
+            ? run && run.model !== "STAFF"
+              ? " Check that BD targets and expenses exist for this month."
+              : " Check that department allocations exist for this month."
+            : ""}
         </div>
       ) : null}
 
       {run
-        ? visible.map((s) => (
+        ? visible.map((s) =>
+            s.model !== "STAFF" ? (
+              <StudioSettlementCard
+                key={s.bdId}
+                s={s}
+                run={run as SettlementRun}
+                a={attributeStudioSettlement(s)}
+                pipeline={pipelineByBd.get(s.bdId) ?? []}
+                isAdmin={isAdmin}
+                monthKey={monthKey}
+              />
+            ) : (
             <SettlementCard
               key={s.bdId}
               s={s}
@@ -224,7 +242,8 @@ export default async function BdSettlementPage({
               monthKey={monthKey}
               returnTo={qs(monthKey)}
             />
-          ))
+            )
+          )
         : null}
     </div>
   );
